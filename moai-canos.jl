@@ -11,11 +11,12 @@ predictor = MOAI.PytorchModel("vector-canos.pt")
 
 N = 312
 model = JuMP.Model(Ipopt.Optimizer)
+#JuMP.set_optimizer_attribute(model, "linear_solver", "ma57")
 JuMP.@variable(model, x[1:N], start = 0.5)
-y, formulation = MOAI.add_predictor(model, predictor, x)
+y, formulation = MOAI.add_predictor(model, predictor, x, vector_nonlinear_oracle = true)
 xref = ones(N)
 JuMP.@objective(model, Min, sum((x .- xref).^2))
 # I just chose random numbers here, but we'd want to constrain a voltage or something
 # to go over its limit.
-JuMP.@constraint(model, y[2] >= 2.0)
+JuMP.@constraint(model, y[2] >= 1.0)
 JuMP.optimize!(model)
