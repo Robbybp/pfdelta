@@ -24,7 +24,7 @@ ENV["JULIA_CONDAPKG_BACKEND"] = "Null" # reuse existing Python env
 import JuMP
 import Ipopt
 import LinearAlgebra
-import PythonCall
+using PythonCall
 import MathOptAI as MOAI
 import PowerModels
 
@@ -34,8 +34,13 @@ PythonCall.pyimport("sys").path.append(pwd())
 PythonCall.pyimport("pfnet_vector_wrapper") # ensure dependencies are loaded
 predictor = MOAI.PytorchModel("vector-pfnet.pt")
 
-N = 184 # input dim for vector-pfnet.pt (case14 template); adjust if different
-base_x = zeros(N) # TODO: load your true base-case flattened PFNet input here
+# Get a real base-case PFNet input from the saved wrapper
+torch = pyimport("torch")
+pyimport("pfnet_vector_wrapper") # ensure class is registered for torch.load
+wrapper = torch.load("vector-pfnet.pt", map_location="cpu")
+base_x_py = wrapper.flatten_input_from_data(wrapper.template).detach().cpu().numpy()
+base_x = pyconvert(Vector{Float64}, base_x_py)
+N = length(base_x)
 
 # ---------------------------------------------------------------------------
 # Load network data and build ACPF model with PowerModels
@@ -59,7 +64,12 @@ pm = PowerModels.instantiate_model(
     PowerModels.build_pf;
 )
 model = pm.model
-JuMP.set_optimizer(model, JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 5))
+ipopt = JuMP.optimizer_with_attributes(
+    Ipopt.Optimizer,
+    "linear_solver" => "ma27",
+    "tol" => 1e-6,
+)
+JuMP.set_optimizer(model, ipopt)
 
 # Bus ordering helper
 bus_ids = sort([parse(Int, k) for k in keys(data["bus"])])
