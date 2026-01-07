@@ -1,0 +1,79 @@
+config_type: experiment
+model:
+  name: powerflownet
+  nfeature_dim: 6
+  efeature_dim: 5
+  output_dim: 6
+  hidden_dim: 128
+  n_gnn_layers: 3
+  K: 4
+  dropout_rate: 0.1
+dataset:
+  datasets:
+  - name: pfdeltaPFNet
+    case_name: case14
+    model: PFNet
+    root_dir: data
+    split: train
+    task: 1.1
+    transform: pfnet_data_mean0_var1
+    add_bus_type: false
+  - name: pfdeltaPFNet
+    case_name: case14
+    model: PFNet
+    root_dir: data
+    split: val
+    task: 1.1
+    transform: pfnet_data_mean0_var1
+    add_bus_type: false
+functional:
+  trainer_name: gnn_trainer
+  run_name: pfnet_case14_quick
+  run_location: pfnet_case14_quick
+  seed: 0
+optim:
+  optimizer:
+    name: Adam
+    lr: 0.001
+  train_params:
+    epochs: 5
+    batch_size: 32
+    train_loss:
+    - name: GNNTorchLoss
+      output_name: bus__y
+      torch_nn_name: MSELoss
+    - name: pfn_masked_mse
+      regularize: false
+    - name: pfn_masked_mse
+      regularize: true
+    - model: PFNet
+      name: universal_power_balance
+    - name: recycle_loss
+      keyword: pbl_pf
+      loss_name: PBL Max
+      recycled_parameter: power_balance_max
+    - name: recycle_loss
+      keyword: pbl_pf
+      loss_name: PBL L2
+      recycled_parameter: power_balance_l2
+  val_params:
+    batch_size: 32
+    report_every: 1
+    val_loss:
+    - name: pfn_masked_mse
+      regularize: false
+    - name: pfn_masked_mse
+      regularize: true
+    - name: GNNTorchLoss
+      output_name: bus__y
+      torch_nn_name: MSELoss
+    - model: PFNet
+      name: universal_power_balance
+    - name: recycle_loss
+      keyword: pbl_pf
+      loss_name: PBL Max
+      recycled_parameter: power_balance_max
+    - name: recycle_loss
+      keyword: pbl_pf
+      loss_name: PBL L2
+      recycled_parameter: power_balance_l2

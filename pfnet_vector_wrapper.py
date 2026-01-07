@@ -110,15 +110,33 @@ eattr = data['bus','branch','bus'].edge_attr
 fe = eattr.size(-1)
 
 # Model
-model = PowerFlowNet(
-    nfeature_dim=6,
-    efeature_dim=fe,
-    output_dim=6,
-    hidden_dim=64,
-    n_gnn_layers=3,
-    K=4,
-    dropout_rate=0.0,
-)
+# Load trained PFNet weights (case14 quick run). Adjust path if you train a new model.
+checkpoint_path = "runs/pfnet_case14_quick/pfnet_case14_quick_260107_133423/model.pt"
+try:
+    model = PowerFlowNet(
+        nfeature_dim=6,
+        efeature_dim=fe,
+        output_dim=6,
+        hidden_dim=128,
+        n_gnn_layers=3,
+        K=4,
+        dropout_rate=0.0,
+    )
+    state = torch.load(checkpoint_path, map_location="cpu")
+    model.load_state_dict(state)
+    model.eval()
+    print(f"Loaded trained PFNet weights from {checkpoint_path}")
+except FileNotFoundError:
+    print(f"Warning: checkpoint {checkpoint_path} not found; using randomly initialized model")
+    model = PowerFlowNet(
+        nfeature_dim=6,
+        efeature_dim=fe,
+        output_dim=6,
+        hidden_dim=64,
+        n_gnn_layers=3,
+        K=4,
+        dropout_rate=0.0,
+    )
 
 wrapper = PFNetVectorWrapper(model, data)
 
