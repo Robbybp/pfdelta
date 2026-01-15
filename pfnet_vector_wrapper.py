@@ -9,7 +9,7 @@ PFNet vector I/O wrapper + demo on real PFDelta data.
 import torch
 from torch import nn
 
-from core.datasets.pfdelta_dataset import PFDeltaPFNet
+from core.datasets.pfdelta_variants import PFDeltaPFNet
 from core.models.powerflownet import PowerFlowNet
 
 
