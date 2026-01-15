@@ -13,7 +13,7 @@ N = 312
 model = JuMP.Model(Ipopt.Optimizer)
 #JuMP.set_optimizer_attribute(model, "linear_solver", "ma57")
 JuMP.@variable(model, x[1:N], start = 0.5)
-y, formulation = MOAI.add_predictor(model, predictor, x, vector_nonlinear_oracle = true)
+y, formulation = MOAI.add_predictor(model, predictor, x, gray_box = true)
 xref = ones(N)
 JuMP.@objective(model, Min, sum((x .- xref).^2))
 # I just chose random numbers here, but we'd want to constrain a voltage or something

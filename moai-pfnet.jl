@@ -8,13 +8,13 @@ import MathOptAI as MOAI
 
 # Requires torch and torch_geometric
 PythonCall.pyimport("sys").path.append(pwd())
-PythonCall.pyimport("pfnet_vector_wrapper")
+PythonCall.pyimport("vectorpfnet_untrained")
 predictor = MOAI.PytorchModel("vector-pfnet.pt")
 
 N = 184
 model = JuMP.Model(Ipopt.Optimizer)
 JuMP.@variable(model, x[1:N], start = 0.0)
-y, formulation = MOAI.add_predictor(model, predictor, x, vector_nonlinear_oracle = true)
+y, formulation = MOAI.add_predictor(model, predictor, x, gray_box = true)
 xref = ones(N)
 JuMP.@objective(model, Min, sum((x .- xref).^2))
 # I just chose random numbers here, but we'd want to constrain a voltage or something
