@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#/usr/bin/env python3
 """
 PFNet vector wrapper
 - Builds metadata from one PFDeltaPFNet sample.
@@ -33,14 +33,14 @@ class PFNetVectorWrapper(nn.Module):
         self.model = model
         self.template = template
 
-        bx = template['bus'].x
+        bx = template["bus"].x
         self.num_buses = bx.size(0)
         # PFNet bus.x has 16 dims: 4 one-hot, 6 input features, 6 pred mask
         self.bus_feat_start = 4
         self.bus_feat_len = 6
         assert bx.size(1) >= self.bus_feat_start + self.bus_feat_len, "Unexpected PFNet bus.x layout"
 
-        self.edge_attr_shape = tuple(template['bus','branch','bus'].edge_attr.shape)
+        self.edge_attr_shape = tuple(template["bus","branch","bus"].edge_attr.shape)
         self.efeat_len = self.edge_attr_shape[1]
         self.num_edges = self.edge_attr_shape[0]
 
@@ -53,8 +53,8 @@ class PFNetVectorWrapper(nn.Module):
         self.output_dim = out.numel()
 
     def flatten_input_from_data(self, data) -> torch.Tensor:
-        bx = data['bus'].x[:, self.bus_feat_start:self.bus_feat_start+self.bus_feat_len]
-        ea = data['bus','branch','bus'].edge_attr
+        bx = data["bus"].x[:, self.bus_feat_start:self.bus_feat_start+self.bus_feat_len]
+        ea = data["bus","branch","bus"].edge_attr
         return torch.cat([bx.reshape(-1), ea.reshape(-1)], dim=0)
 
     def unflatten_to_data(self, vec: torch.Tensor):
@@ -68,11 +68,11 @@ class PFNetVectorWrapper(nn.Module):
         data = self.template.clone()
         # restore bus.x 6 input features; keep one-hot and pred mask from template
         bus_feats = vec[:fb].view(n_bus, self.bus_feat_len)
-        data['bus'].x[:, self.bus_feat_start:self.bus_feat_start+self.bus_feat_len] = bus_feats
+        data["bus"].x[:, self.bus_feat_start:self.bus_feat_start+self.bus_feat_len] = bus_feats
 
         # restore edge_attr
         edge_feats = vec[fb:fb+fe].view(n_e, self.efeat_len)
-        data['bus','branch','bus'].edge_attr = edge_feats
+        data["bus","branch","bus"].edge_attr = edge_feats
         return data
 
     def flatten_output(self, out: torch.Tensor) -> torch.Tensor:
@@ -93,9 +93,9 @@ torch.manual_seed(0)
 # Load real PFDelta sample
 ds = PFDeltaPFNet(
     root_dir="data",
-    case_name='case14',
-    split='train',
-    model='PFNet',
+    case_name="case14",
+    split="train",
+    model="PFNet",
     task=1.1,
     add_bus_type=False,
     transform=None,
@@ -104,8 +104,8 @@ ds = PFDeltaPFNet(
 )
 data = ds[0]
 
-n_buses = data['bus'].x.size(0)
-eattr = data['bus','branch','bus'].edge_attr
+n_buses = data["bus"].x.size(0)
+eattr = data["bus","branch","bus"].edge_attr
 fe = eattr.size(-1)
 
 # Model
