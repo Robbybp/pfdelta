@@ -1,3 +1,4 @@
+ENV["JULIA_CONDAPKG_BACKEND"] = "Null"
 import JuMP
 import Ipopt
 import MathOptInterface as MOI
