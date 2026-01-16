@@ -105,6 +105,7 @@ class VectorCanos(nn.Module):
         return self.flatten_output(out)
 
 
+torch.manual_seed(48)
 dataset = OPFData(
     split="train",
     case_name="pglib_opf_case14_ieee",
