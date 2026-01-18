@@ -1,11 +1,6 @@
 import os
-import copy
-
 import torch
-from core.datasets.pfdelta_dataset import PFDeltaDataset
 from core.models.canos_pf import CANOS_PF
-from core.datasets.opfdata import opfdata_mean0_var1
-from core.utils.registry import registry
 from core.datasets.pfdelta_variants import PFDeltaCANOS
 
 dataset_name = "pfdeltaCANOS"
@@ -32,29 +27,9 @@ canos_state = torch.load(modelpath, map_location="cpu")
 canos.load_state_dict(canos_state)
 canos.eval()
 
-# CANOS expects HeterData with:
-# - bus
-# - gen
-# - load
-# - a bunch of edge keys
-
-#x = {
-#    "bus": torch.zeros(2),
-#    "gen": torch.tensor([]),
-#    "load": torch.tensor([]),
-#}
-
 data = dataset[0]
 for node_type in data.num_node_features.keys():
     print(f"{node_type}: {data.num_node_features[node_type]}")
     print(data[node_type])
     print(data[node_type].x)
     # It appears data[node_type].x needs to be added somewhere...
-
-#projected_nodes = {
-#    node_type: canos.encoder.node_projections[node_type](data[node_type].x)
-#    for node_type in data.num_node_features.keys()
-#}
-
-#stats = dict(mean=0.0, std=1.0)
-#newdata = opfdata_mean0_var1(stats, data)
