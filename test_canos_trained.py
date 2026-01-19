@@ -19,7 +19,7 @@ hidden_dim = 128
 include_sent_messages = False # "self-edges" in inter-layer connections?
 k_steps = 15 # Number of "message passing" steps
 canos = CANOS_PF(dataset, hidden_dim, include_sent_messages, k_steps)
-nparam = sum(p.numel() for p in canos.parameters if p.requires_grad)
+nparam = sum(p.numel() for p in canos.parameters() if p.requires_grad)
 print(f"N. parameters: {nparam}")
 
 modelpath = os.path.join("runs", "canos_task_1_1", "canos_k_steps15_hd128_lr5e-4_task_1_1_260116_121912", "model.pt")
@@ -33,3 +33,6 @@ for node_type in data.num_node_features.keys():
     print(data[node_type])
     print(data[node_type].x)
     # It appears data[node_type].x needs to be added somewhere...
+
+print(data)
+print(canos(data))
