@@ -2,6 +2,7 @@ import os
 import torch
 from core.models.canos_pf import CANOS_PF
 from core.datasets.pfdelta_variants import PFDeltaCANOS
+from vectorcanos import VectorCanos
 
 dataset_name = "pfdeltaCANOS"
 print(f"Dataset name:  {dataset_name}")
@@ -36,3 +37,7 @@ for node_type in data.num_node_features.keys():
 
 print(data)
 print(canos(data))
+
+vcanos = VectorCanos(canos, data)
+torch.save(vcanos, "vectorcanos-trained.pt")
+print("Saved vectorized wrapper to vectorcanos-trained.pt")
