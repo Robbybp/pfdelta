@@ -92,27 +92,28 @@ class VectorCanos(nn.Module):
         return self.flatten_output(out)
 
 
-torch.manual_seed(48)
-dataset = PFDeltaCANOS(
-    add_bus_type=True,
-    case_name="case14",
-    model="CANOS",
-    root_dir=os.path.join("data", "pfdelta_data"),
-    split="train",
-    task="1.1",
-)
-sample = dataset[0]
-hidden_dim = 128
-include_sent_messages = False
-k_steps = 15
-canos = CANOS_PF(
-    dataset=dataset,
-    hidden_dim=hidden_dim,
-    include_sent_messages=include_sent_messages,
-    k_steps=k_steps,
-)
-wrapper = VectorCanos(canos, sample)
-x_flat = wrapper.flatten_input(sample)
-y_flat = wrapper(x_flat)
-print(f"input_dim={wrapper.input_dim}  output_dim={wrapper.output_dim}")
-torch.save(wrapper, "vector-canos.pt")
+if __name__ == "__main__":
+    torch.manual_seed(48)
+    dataset = PFDeltaCANOS(
+        add_bus_type=True,
+        case_name="case14",
+        model="CANOS",
+        root_dir=os.path.join("data", "pfdelta_data"),
+        split="train",
+        task="1.1",
+    )
+    sample = dataset[0]
+    hidden_dim = 128
+    include_sent_messages = False
+    k_steps = 15
+    canos = CANOS_PF(
+        dataset=dataset,
+        hidden_dim=hidden_dim,
+        include_sent_messages=include_sent_messages,
+        k_steps=k_steps,
+    )
+    wrapper = VectorCanos(canos, sample)
+    x_flat = wrapper.flatten_input(sample)
+    y_flat = wrapper(x_flat)
+    print(f"input_dim={wrapper.input_dim}  output_dim={wrapper.output_dim}")
+    torch.save(wrapper, "vector-canos.pt")
