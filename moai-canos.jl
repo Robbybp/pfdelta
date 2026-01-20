@@ -44,37 +44,54 @@ x0_flat = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
 # Map variables to _input_ data
 function get_inputs(pm::PowerModels.AbstractPowerModel)
     ref = pm.ref[:it][:pm][:nw][0]
-    buskeys = sort(collect(keys(pm.data["bus"]); by = k -> parse(Int, k)))
+    buskeys = sort(collect(keys(pm.data["bus"])); by = k -> parse(Int, k))
+    branchkeys = sort(collect(keys(pm.data["branch"])); by = k -> parse(Int, k))
     # Inputs could be numbers, variables, or expressions
-    inputs = Any[]
+    bus_inputs = Any[]
+    pq_inputs = Any[]
+    pv_inputs = Any[]
+    slack_inputs = Any[]
+    branch_inputs = Any[]
     # Bus inputs
     # bus_type == 3 => reference bus
     # bus_type == 2 => generator (PV) bus
     # bus_type == 1 => load (PQ) bus
-    gen_buses = filter(i -> pm.data["bus"][i]["bus_type"] == 2, buskeys)
-    load_buses = filter(i -> pm.data["bus"][i]["bus_type"] == 1, buskeys)
-    slack_buses = filter(i -> pm.data["bus"][i]["bus_type"] == 3, buskeys)
     for i in buskeys
         idx = parse(Int, i)
         bus_type = pm.data["bus"][i]["bus_type"]
         if bus_type == 1
-            pd = sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx])
-            qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx])
-            append!(inputs, [pd, qd])
+            pd = sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init = 0.0)
+            qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init = 0.0)
+            append!(pq_inputs, [pd, qd])
+            append!(bus_inputs, [pd, qd])
         elseif bus_type == 2
             # Since the input calls for total injection/demand, I sum up generator
             # active power variables at each node.
-            pg = sum(ref[:gen][g]["pg"] for g in ref[:bus_gens][idx])
+            pg = sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx])
             vm = PowerModels.var(pm, :vm, idx)
-            append!(inputs, [pg, vm])
+            append!(pv_inputs, [pg, vm])
+            append!(bus_inputs, [pg, vm])
         elseif bus_type == 3
             va = PowerModels.var(pm, :va, idx)
             vm = PowerModels.var(pm, :vm, idx)
-            append!(inputs, [va, vm])
+            append!(slack_inputs, [va, vm])
+            append!(bus_inputs, [va, vm])
         else
             error("Unexpected bus type $(bus_type)")
         end
     end
+    for i in branchkeys
+        r = data["branch"][i]["br_r"]
+        x = data["branch"][i]["br_x"]
+        gf = data["branch"][i]["g_fr"]
+        bf = data["branch"][i]["b_fr"]
+        gt = data["branch"][i]["g_to"]
+        bt = data["branch"][i]["b_to"]
+        tap = data["branch"][i]["tap"]
+        shift = data["branch"][i]["shift"]
+        append!(branch_inputs, [r, x, gf, bf, gt, bt, tap, shift])
+    end
+    inputs = vcat(bus_inputs, pq_inputs, pv_inputs, slack_inputs, branch_inputs)
     return inputs
 end
 
@@ -82,3 +99,5 @@ end
 # 2. Load point from dataset, map variables to values from this point, construct objective.
 # 3. Deactivate bounds on ACPF outputs.
 # 4. Add bound constraining _some_ output to be above its limit
+
+inputs = get_inputs(pm)
