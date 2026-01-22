@@ -281,6 +281,7 @@ pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerM
 # 4. Add bound constraining _some_ output to be above its limit
 
 inputs = get_inputs(pm)
+outputs = get_outputs(pm)
 input_names = get_input_names(pm)
 n_inputs = length(inputs)
 
@@ -305,11 +306,23 @@ JuMP.@constraint(pm.model, input_slack_eqn,
 )
 JuMP.@objective(pm.model, Min, sum(input_slack_pos .+ input_slack_neg))
 
+# CANOS constraints
+# We add these extra variables as a hacky workaround to make all inputs variables.
+@variable(pm.model, moai_inputs[1:n_inputs], start = 1.0)
+@constraint(pm.model, moai_input_link, inputs .== moai_inputs)
+y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
+pm_to_canos = Dict(zip(outputs, y))
+
+# Constraints imposing a voltage mismatch on some bus
+vm_pm = PowerModels.var(pm, :vm, 12)
+vm_canos = pm_to_canos[vm_pm]
+@constraint(pm.model, vm_pm <= 0.90)
+@constraint(pm.model, vm_canos >= 0.94)
+
 JuMP.set_optimizer(pm.model, Ipopt.Optimizer)
 JuMP.set_optimizer_attributes(pm.model, "linear_solver" => "ma27")
 JuMP.optimize!(pm.model)
 
-# I don't expect to get zero error here unless I've updated parameters in PM.data
 println("idx\tname\tvalue\ttarget\terror\tlb\tub\ttype")
 for i in 1:n_inputs
     inp = inputs[i]
@@ -358,6 +371,10 @@ py_y1 = nn(py_x1).detach()
 #diff = torch.abs(py_y1 - py_y0)
 y1 = PythonCall.pyconvert(Vector{Float64}, py_y1.numpy())
 
-outputs = get_outputs(pm)
 y_pf = JuMP.value.(outputs)
 diff = y_pf .- y1
+
+println(@sprintf("%4s %10s %10s %10s %10s", "idx", "var", "pm_out", "canos_out", "err"))
+for i in eachindex(y_pf)
+    println(@sprintf("%4d %10s %10.3f %10.3f %10.3f", i, outputs[i], y_pf[i], y1[i], diff[i]))
+end
