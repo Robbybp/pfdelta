@@ -8,7 +8,8 @@ using Printf
 import MathOptAI as MOAI
 import PowerModels
 import PGLib
-import MathProgIncidence
+import MathProgIncidence as MPIN
+import PowerPlots
 
 # Python imports
 PythonCall.pyimport("sys").path.append(pwd())
@@ -18,7 +19,7 @@ torch = PythonCall.pyimport("torch")
 # Load CANOS NN model
 #modelpath = joinpath("runs", "canos_task_1_1", "canos_k_steps15_hd128_lr5e-4_task_1_1_260116_121912", "model.pt")
 modelpath = "vectorcanos-trained.pt"
-nn = torch.load(modelpath, map_location = "cpu")
+nn = torch.load(modelpath, map_location="cpu")
 predictor = MOAI.PytorchModel(modelpath)
 
 # Load dataset that we will use for target data
@@ -26,19 +27,87 @@ pfdelta_variants = PythonCall.pyimport("core.datasets.pfdelta_variants")
 PFDeltaCANOS = pfdelta_variants.PFDeltaCANOS
 root_dir = joinpath("data", "pfdelta_data")
 dataset = PFDeltaCANOS(
-    add_bus_type = true,
-    case_name = "case14",
-    model = "CANOS",
-    root_dir = root_dir,
-    split = "train",
-    task = "1.1",
+    add_bus_type=true,
+    case_name="case14",
+    model="CANOS",
+    root_dir=root_dir,
+    split="train",
+    task="1.1",
 )
+
+"""
+Load PFΔ input data into a PowerModels data structure.
+Anything that is a constant in PowerModels must be set as in this data dict
+before building the JuMP model. This includes:
+- Loads
+- Line parameters
+"""
+function load_pfd_into_pm!(pm_data::Dict, py_data::Py)
+    # Set loads and slack bus params in pm_data
+    load_matrix = PythonCall.pyconvert(Matrix{Float64}, py_data["bus"]["bus_demand"].numpy())
+    slack_matrix = PythonCall.pyconvert(Matrix{Float64}, py_data["slack"]["x"].numpy())
+    # We need to distribute these loads across all loads at each bus.
+    loads_by_bus = Dict(b["index"] => Any[] for b in values(pm_data["bus"]))
+    nbus = length(loads_by_bus)
+    busindices = map(b -> b["index"], values(pm_data["bus"]))
+    # Make sure bus indices are contiguous integers
+    @assert all(sort(busindices) .== collect(1:nbus))
+    for l in values(pm_data["load"])
+        b = l["load_bus"]
+        push!(loads_by_bus[b], l["index"])
+    end
+    for i in 1:length(pm_data["bus"])
+        # Set vm and va for reference bus
+        # Note that it doesn't matter that we have set any potential loads on the
+        # reference bus. In fact, this will make it less confusing if we want to compare
+        # net generation with actual generator values.
+        if pm_data["bus"]["$i"]["bus_type"] == 3
+            println("Setting slack bus parameters on bus $i")
+            pm_data["bus"]["$i"]["va"] = slack_matrix[1, 1]
+            pm_data["bus"]["$i"]["vm"] = slack_matrix[1, 2]
+        end
+
+        pd = load_matrix[i, 1]
+        qd = load_matrix[i, 2]
+        if pd == 0.0 && qd == 0.0
+            continue
+        end
+        nd = length(loads_by_bus[i])
+        if nd == 0
+            error("Zero loads attached to a bus that should have some net load")
+        end
+        p_per_load = pd / nd
+        q_per_load = qd / nd
+        for l in loads_by_bus[i]
+            pm_data["load"]["$l"]["pd"] = p_per_load
+            pm_data["load"]["$l"]["qd"] = q_per_load
+        end
+    end
+
+    # Set line parameters
+    branch_matrix = PythonCall.pyconvert(Matrix{Float64}, py_data["bus", "branch", "bus"]["edge_attr"])
+    # This doesn't assume branch keys are contiguous integers
+    branchkeys = sort(collect(keys(pm_data["branch"])); by=k -> parse(Int, k))
+    for (i, k) in enumerate(branchkeys)
+        br = pm_data["branch"][k]
+        br["br_r"] = branch_matrix[i, 1]
+        br["br_x"] = branch_matrix[i, 2]
+        br["g_fr"] = branch_matrix[i, 3]
+        br["b_fr"] = branch_matrix[i, 4]
+        br["g_to"] = branch_matrix[i, 5]
+        br["b_to"] = branch_matrix[i, 6]
+        br["tap"] = branch_matrix[i, 7]
+        br["shift"] = branch_matrix[i, 8]
+    end
+
+    return pm_data
+end
 
 # Map variables to _input_ data
 function get_inputs(pm::PowerModels.AbstractPowerModel)
     ref = pm.ref[:it][:pm][:nw][0]
-    buskeys = sort(collect(keys(pm.data["bus"])); by = k -> parse(Int, k))
-    branchkeys = sort(collect(keys(pm.data["branch"])); by = k -> parse(Int, k))
+    buskeys = sort(collect(keys(pm.data["bus"])); by=k -> parse(Int, k))
+    branchkeys = sort(collect(keys(pm.data["branch"])); by=k -> parse(Int, k))
     # Inputs could be numbers, variables, or expressions
     bus_inputs = Any[]
     pq_inputs = Any[]
@@ -53,14 +122,20 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
         idx = parse(Int, i)
         bus_type = pm.data["bus"][i]["bus_type"]
         if bus_type == 1
-            pd = sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init = 0.0)
-            qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init = 0.0)
+            # Assume no generators live on a load bus
+            @assert length(ref[:bus_gens][idx]) == 0
+            pd = sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init=0.0)
+            qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init=0.0)
             append!(pq_inputs, [pd, qd])
             append!(bus_inputs, [pd, qd])
         elseif bus_type == 2
             # Since the input calls for total injection/demand, I sum up generator
             # active power variables at each node.
-            pg = sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx])
+            pg = (
+                sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx])
+                -
+                sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init=0.0)
+            )
             vm = PowerModels.var(pm, :vm, idx)
             append!(pv_inputs, [pg, vm])
             append!(bus_inputs, [pg, vm])
@@ -88,12 +163,61 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
     return inputs
 end
 
+function get_input_names(pm::PowerModels.AbstractPowerModel)
+    ref = pm.ref[:it][:pm][:nw][0]
+    buskeys = sort(collect(keys(pm.data["bus"])); by=k -> parse(Int, k))
+    branchkeys = sort(collect(keys(pm.data["branch"])); by=k -> parse(Int, k))
+
+    bus_names = String[]
+    pq_names = String[]
+    pv_names = String[]
+    slack_names = String[]
+    branch_names = String[]
+
+    for i in buskeys
+        idx = parse(Int, i)
+        bus_type = pm.data["bus"][i]["bus_type"]
+        if bus_type == 1
+            append!(bus_names, ["bus_pd[$idx]", "bus_qd[$idx]"])
+            append!(pq_names, ["pq_pd[$idx]", "pq_qd[$idx]"])
+        elseif bus_type == 2
+            append!(bus_names, ["bus_pg[$idx]", "bus_vm[$idx]"])
+            append!(pv_names, ["pv_pg[$idx]", "pv_vm[$idx]"])
+        elseif bus_type == 3
+            append!(bus_names, ["bus_va[$idx]", "bus_vm[$idx]"])
+            append!(slack_names, ["slack_va[$idx]", "slack_vm[$idx]"])
+        else
+            error("Unexpected bus type $(bus_type)")
+        end
+    end
+
+    for i in branchkeys
+        idx = parse(Int, i)
+        append!(
+            branch_names,
+            [
+                "br_r[$idx]",
+                "br_x[$idx]",
+                "g_fr[$idx]",
+                "b_fr[$idx]",
+                "g_to[$idx]",
+                "b_to[$idx]",
+                "tap[$idx]",
+                "shift[$idx]",
+            ],
+        )
+    end
+
+    return vcat(bus_names, pq_names, pv_names, slack_names, branch_names)
+end
+
 py_x0 = dataset[0]
 py_x0_flat = nn.flatten_input(py_x0)
 x0_flat = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
 pglib_data = PGLib.pglib("case14")
 load_pfd_into_pm!(pglib_data, py_x0)
-pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerModels.build_pf)
+println(pglib_data["bus"]["1"])
+pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
 
 # 1. Add any variables that are necessary
 # 2. Load point from dataset, map variables to values from this point, construct objective.
@@ -101,7 +225,21 @@ pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerM
 # 4. Add bound constraining _some_ output to be above its limit
 
 inputs = get_inputs(pm)
+input_names = get_input_names(pm)
 n_inputs = length(inputs)
+
+# Delete bounds and inequalities from the original model
+for var in JuMP.all_variables(pm.model)
+    if JuMP.has_lower_bound(var)
+        JuMP.delete_lower_bound(var)
+    end
+    if JuMP.has_upper_bound(var)
+        JuMP.delete_upper_bound(var)
+    end
+end
+for con in MPIN.get_inequality_constraints(pm.model)
+    JuMP.delete(pm.model, con)
+end
 
 # Minimize 1-norm of difference between inputs and our target inputs.
 JuMP.@variable(pm.model, input_slack_pos[1:n_inputs] >= 0.0, start = 0.0)
@@ -112,13 +250,53 @@ JuMP.@constraint(pm.model, input_slack_eqn,
 JuMP.@objective(pm.model, Min, sum(input_slack_pos .+ input_slack_neg))
 
 JuMP.set_optimizer(pm.model, Ipopt.Optimizer)
+JuMP.set_optimizer_attributes(pm.model, "linear_solver" => "ma27")
 JuMP.optimize!(pm.model)
 
 # I don't expect to get zero error here unless I've updated parameters in PM.data
-#for i in 1:n_inputs
-#    lb = JuMP.has_lower_bound
-#    println(
-#        @sprintf("%10.2f", inputs[i])
-#        * @sprintf("%10.2f", x0_flat[i])
-#    )
-#end
+println("idx\tname\tvalue\ttarget\terror\tlb\tub\ttype")
+for i in 1:n_inputs
+    inp = inputs[i]
+    val = isa(inp, Number) ? inp : JuMP.value(inp)
+    target = x0_flat[i]
+    err = abs(val - target)
+
+    if err <= 1e-8
+        continue
+    end
+    if isa(inp, JuMP.VariableRef)
+        lb = JuMP.has_lower_bound(inp) ? JuMP.lower_bound(inp) : -Inf
+        ub = JuMP.has_upper_bound(inp) ? JuMP.upper_bound(inp) : Inf
+        println(
+            @sprintf(
+                "%d\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\tvar",
+                i,
+                input_names[i],
+                val,
+                target,
+                err,
+                lb,
+                ub,
+            )
+        )
+    else
+        kind = isa(inp, Number) ? "const" : "expr"
+        println(
+            @sprintf(
+                "%d\t%s\t%.6f\t%.6f\t%.6f\t-\t-\t%s",
+                i,
+                input_names[i],
+                val,
+                target,
+                err,
+                kind,
+            )
+        )
+    end
+end
+
+x1 = JuMP.value.(inputs)
+py_x1 = torch.tensor(x1)
+y0 = nn(py_x0_flat)
+y1 = nn(py_x1)
+diff = torch.abs(y1 - y0)
