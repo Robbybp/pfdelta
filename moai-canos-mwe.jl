@@ -10,7 +10,7 @@ PythonCall.pyimport("sys").path.append(pwd())
 PythonCall.pyimport("vectorcanos")
 predictor = MOAI.PytorchModel("vector-canos.pt")
 
-N = 312
+N = 216
 model = JuMP.Model(Ipopt.Optimizer)
 #JuMP.set_optimizer_attribute(model, "linear_solver", "ma57")
 JuMP.@variable(model, x[1:N], start = 0.5)
