@@ -133,8 +133,7 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
             # active power variables at each node.
             pg = (
                 sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx])
-                -
-                sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init=0.0)
+                - sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init=0.0)
             )
             vm = PowerModels.var(pm, :vm, idx)
             append!(pv_inputs, [pg, vm])
@@ -161,6 +160,63 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
     end
     inputs = vcat(bus_inputs, pq_inputs, pv_inputs, slack_inputs, branch_inputs)
     return inputs
+end
+
+function get_outputs(pm::PowerModels.AbstractPowerModel)
+    ref = pm.ref[:it][:pm][:nw][0]
+    buskeys = sort(collect(keys(pm.data["bus"])); by=k -> parse(Int, k))
+    branchkeys = sort(collect(keys(pm.data["branch"])); by=k -> parse(Int, k))
+
+    bus_out = Any[]
+    pq_out = Any[]
+    pv_out = Any[]
+    slack_out = Any[]
+    branch_out = Any[]
+
+    for buskey in buskeys
+        idx = parse(Int, buskey)
+        bus_type = pm.data["bus"][buskey]["bus_type"]
+
+        va = PowerModels.var(pm, :va, idx)
+        vm = PowerModels.var(pm, :vm, idx)
+        append!(bus_out, [va, vm])
+
+        if bus_type == 1
+            append!(pq_out, [va, vm])
+        elseif bus_type == 2
+            qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)
+            qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init=0.0)
+            net_q = qg - qd
+            append!(pv_out, [va, net_q])
+        elseif bus_type == 3
+            pg = sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx]; init=0.0)
+            qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)
+            pd = sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init=0.0)
+            qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init=0.0)
+            net_p = pg - pd
+            net_q = qg - qd
+            append!(slack_out, [net_p, net_q])
+        else
+            error("Unexpected bus type $(bus_type)")
+        end
+    end
+
+    for branchkey in branchkeys
+        idx = parse(Int, branchkey)
+        fbus = ref[:branch][idx]["f_bus"]
+        tbus = ref[:branch][idx]["t_bus"]
+        append!(
+            branch_out,
+            [
+                PowerModels.var(pm, :p, (idx, fbus, tbus)),
+                PowerModels.var(pm, :q, (idx, fbus, tbus)),
+                PowerModels.var(pm, :p, (idx, tbus, fbus)),
+                PowerModels.var(pm, :q, (idx, tbus, fbus)),
+            ],
+        )
+    end
+
+    return vcat(bus_out, pq_out, pv_out, slack_out, branch_out)
 end
 
 function get_input_names(pm::PowerModels.AbstractPowerModel)
@@ -297,6 +353,11 @@ end
 
 x1 = JuMP.value.(inputs)
 py_x1 = torch.tensor(x1)
-y0 = nn(py_x0_flat)
-y1 = nn(py_x1)
-diff = torch.abs(y1 - y0)
+py_y0 = nn(py_x0_flat).detach()
+py_y1 = nn(py_x1).detach()
+#diff = torch.abs(py_y1 - py_y0)
+y1 = PythonCall.pyconvert(Vector{Float64}, py_y1.numpy())
+
+outputs = get_outputs(pm)
+y_pf = JuMP.value.(outputs)
+diff = y_pf .- y1
