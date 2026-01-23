@@ -102,8 +102,12 @@ function load_pfd_into_pm!(pm_data::Dict, py_data::Py)
     return pm_data
 end
 
-# Map variables to _input_ data
+"""
+Get the vector of inputs as expected by CANOS-PF. These inputs can be
+JuMP variables, JuMP expressions, or constants.
+"""
 function get_inputs(pm::PowerModels.AbstractPowerModel)
+    # TODO: This function should also get the names of the inputs
     ref = pm.ref[:it][:pm][:nw][0]
     buskeys = sort(collect(keys(pm.data["bus"])); by=k -> parse(Int, k))
     branchkeys = sort(collect(keys(pm.data["branch"])); by=k -> parse(Int, k))
@@ -322,6 +326,7 @@ inputs, input_bounds = get_inputs(pm)
 outputs = get_outputs(pm)
 input_names = get_input_names(pm)
 n_inputs = length(inputs)
+n_outputs = length(outputs)
 
 # Make sure our target variable does not violate any bounds
 input_lbs = first.(input_bounds)
@@ -352,7 +357,7 @@ JuMP.@objective(pm.model, Min, sum(input_slack_pos .+ input_slack_neg))
 
 # CANOS constraints
 # We add these extra variables as a hacky workaround to make all inputs variables.
-@variable(pm.model, moai_inputs[1:n_inputs], start = 1.0)
+@variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
 @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
 y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
 pm_to_canos = Dict(zip(outputs, y))
@@ -360,17 +365,21 @@ pm_to_canos = Dict(zip(outputs, y))
 # Constraints imposing a voltage mismatch on some bus
 vm_pm = PowerModels.var(pm, :vm, 12)
 vm_canos = pm_to_canos[vm_pm]
-@constraint(pm.model, vm_pm <= 0.90)
-@constraint(pm.model, vm_canos >= 0.94)
+#@constraint(pm.model, vm_pm <= 0.90)
+#@constraint(pm.model, vm_canos >= 0.94)
 
 JuMP.set_optimizer(pm.model, Ipopt.Optimizer)
 JuMP.set_optimizer_attributes(pm.model, "linear_solver" => "ma27")
 JuMP.optimize!(pm.model)
 
+println()
+println("Compare deviations from initial input x0")
+println("----------------------------------------")
 println(@sprintf(
     "%4s %10s %14s %14s %14s %14s %14s %3s",
     "idx", "name", "value", "target", "error", "lb", "ub", "type",
 ))
+solved_to_x0 = true
 for i in 1:n_inputs
     inp = inputs[i]
     val = isa(inp, Number) ? inp : JuMP.value(inp)
@@ -379,6 +388,9 @@ for i in 1:n_inputs
 
     if err <= 1e-8
         continue
+    else
+        # We have some error
+        global solved_to_x0 = false
     end
     if isa(inp, JuMP.VariableRef)
         lb = JuMP.has_lower_bound(inp) ? JuMP.lower_bound(inp) : -Inf
@@ -410,7 +422,25 @@ y1 = PythonCall.pyconvert(Vector{Float64}, py_y1.numpy())
 y_pf = JuMP.value.(outputs)
 diff = y_pf .- y1
 
+println()
+println("Compare output from PowerModels and CANOS model")
+println("-----------------------------------------------")
 println(@sprintf("%4s %10s %10s %10s %10s", "idx", "var", "pm_out", "canos_out", "err"))
 for i in eachindex(y_pf)
     println(@sprintf("%4d %10s %10.3f %10.3f %10.3f", i, outputs[i], y_pf[i], y1[i], diff[i]))
+end
+
+# NOTE That this only makes sense if we solved to a training point x0
+if solved_to_x0
+    println()
+    println("Solved to a training point x0. Labels are available")
+    py_y_target = nn.flatten_input_labels(py_x0)
+    y_target = PythonCall.pyconvert(Vector{Float64}, py_y_target)
+    diff = y_pf .- y_target
+    println("Compare output from PowerModels and CANOS targets")
+    println("-------------------------------------------------")
+    println(@sprintf("%4s %10s %10s %13s %10s", "idx", "var", "pm_out", "canos_target", "err"))
+    for i in eachindex(y_pf)
+        println(@sprintf("%4d %10s %10.3f %10.3f %10.3f", i, outputs[i], y_pf[i], y_target[i], diff[i]))
+    end
 end
