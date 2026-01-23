@@ -219,7 +219,7 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
             qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)
             qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init=0.0)
             net_q = qg - qd
-            append!(pv_out, [va, net_q])
+            append!(pv_out, [net_q, va])
         elseif bus_type == 3
             pg = sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx]; init=0.0)
             qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)

@@ -92,11 +92,11 @@ class CANOS_PF(nn.Module):
         -------
         output_dict : dict
             Dictionary containing model predictions:
-            
+
             - output_dict["bus"] : torch.Tensor of shape (n_bus, 2)
               Predicted bus voltage angle [rad] and magnitude [p.u.].
             - output_dict["PV"] : torch.Tensor of shape (n_PV, 2)
-              Predicted bus voltage angle [rad] and reactive power generation
+              Predicted bus reactive power generation [p.u.] and voltage angle [rad]
             - output_dict["PQ"] : torch.Tensor of shape (n_PQ, 2)
               Predicted bus voltage angle [rad] and magnitude [p.u.].
             - output_dict["slack"] : torch.Tensor of shape (1, 2)
