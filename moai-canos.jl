@@ -135,8 +135,8 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
             append!(pq_inputs, [pd, qd])
             append!(bus_inputs, [pd, qd])
             # Add trivial bounds to avoid having to branch later on...
-            append!(pq_inputs, [(pd, pd), (qd, qd)])
-            append!(bus_inputs, [(pd, pd), (qd, qd)])
+            append!(pq_bounds, [(pd, pd), (qd, qd)])
+            append!(bus_bounds, [(pd, pd), (qd, qd)])
         elseif bus_type == 2
             # Since the input calls for total injection/demand, I sum up generator
             # active power variables at each node.
@@ -168,8 +168,8 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
             vmax = ref[:bus][idx]["vmax"]
             append!(slack_inputs, [va, vm])
             append!(bus_inputs, [va, vm])
-            append!(slack_inputs, [(-2pi, 2pi), (vmin, vmax)])
-            append!(bus_inputs, [(-2pi, 2pi), (vmin, vmax)])
+            append!(slack_bounds, [(-2pi, 2pi), (vmin, vmax)])
+            append!(bus_bounds, [(-2pi, 2pi), (vmin, vmax)])
         else
             error("Unexpected bus type $(bus_type)")
         end
@@ -296,9 +296,20 @@ function get_input_names(pm::PowerModels.AbstractPowerModel)
     return vcat(bus_names, pq_names, pv_names, slack_names, branch_names)
 end
 
+function print_x_with_bounds(x::AbstractVector, input_bounds::Vector{Tuple{Float64,Float64}}, input_names::Vector{String})
+    @assert length(x) == length(input_bounds) == length(input_names)
+    println(@sprintf("%4s %20s %14s %14s %14s %10s", "idx", "name", "value", "lb", "ub", "viol"))
+    for i in eachindex(x)
+        val = x[i]
+        lb, ub = input_bounds[i]
+        viol = max(0.0, val - ub, lb - val)
+        println(@sprintf("%4d %20s %14.6f %14.6f %14.6f %10.3f", i, input_names[i], val, lb, ub, viol))
+    end
+end
+
 py_x0 = dataset[0]
 py_x0_flat = nn.flatten_input(py_x0)
-x0_flat = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
+x0 = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
 pglib_data = PGLib.pglib("case14")
 load_pfd_into_pm!(pglib_data, py_x0)
 println(pglib_data["bus"]["1"])
@@ -313,6 +324,12 @@ inputs, input_bounds = get_inputs(pm)
 outputs = get_outputs(pm)
 input_names = get_input_names(pm)
 n_inputs = length(inputs)
+
+# Make sure our target variable does not violate any bounds
+input_lbs = first.(input_bounds)
+input_ubs = last.(input_bounds)
+@assert all(input_lbs .- 1e-5 .<= x0 .<= input_ubs .+ 1e-5)
+print_x_with_bounds(x0, input_bounds, input_names)
 
 # Delete bounds and inequalities from the original model
 for var in JuMP.all_variables(pm.model)
@@ -331,7 +348,7 @@ end
 JuMP.@variable(pm.model, input_slack_pos[1:n_inputs] >= 0.0, start = 0.0)
 JuMP.@variable(pm.model, input_slack_neg[1:n_inputs] >= 0.0, start = 0.0)
 JuMP.@constraint(pm.model, input_slack_eqn,
-    inputs .- x0_flat .+ input_slack_pos .- input_slack_neg .== 0.0
+    inputs .- x0 .+ input_slack_pos .- input_slack_neg .== 0.0
 )
 JuMP.@objective(pm.model, Min, sum(input_slack_pos .+ input_slack_neg))
 
@@ -356,7 +373,7 @@ println("idx\tname\tvalue\ttarget\terror\tlb\tub\ttype")
 for i in 1:n_inputs
     inp = inputs[i]
     val = isa(inp, Number) ? inp : JuMP.value(inp)
-    target = x0_flat[i]
+    target = x0[i]
     err = abs(val - target)
 
     if err <= 1e-8
