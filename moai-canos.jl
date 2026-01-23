@@ -62,7 +62,6 @@ function load_pfd_into_pm!(pm_data::Dict, py_data::Py)
         # reference bus. In fact, this will make it less confusing if we want to compare
         # net generation with actual generator values.
         if pm_data["bus"]["$i"]["bus_type"] == 3
-            println("Setting slack bus parameters on bus $i")
             pm_data["bus"]["$i"]["va"] = slack_matrix[1, 1]
             pm_data["bus"]["$i"]["vm"] = slack_matrix[1, 2]
         end
@@ -312,7 +311,6 @@ py_x0_flat = nn.flatten_input(py_x0)
 x0 = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
 pglib_data = PGLib.pglib("case14")
 load_pfd_into_pm!(pglib_data, py_x0)
-println(pglib_data["bus"]["1"])
 pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
 
 # 1. Add any variables that are necessary
@@ -369,7 +367,10 @@ JuMP.set_optimizer(pm.model, Ipopt.Optimizer)
 JuMP.set_optimizer_attributes(pm.model, "linear_solver" => "ma27")
 JuMP.optimize!(pm.model)
 
-println("idx\tname\tvalue\ttarget\terror\tlb\tub\ttype")
+println(@sprintf(
+    "%4s %10s %14s %14s %14s %14s %14s %3s",
+    "idx", "name", "value", "target", "error", "lb", "ub", "type",
+))
 for i in 1:n_inputs
     inp = inputs[i]
     val = isa(inp, Number) ? inp : JuMP.value(inp)
@@ -384,27 +385,16 @@ for i in 1:n_inputs
         ub = JuMP.has_upper_bound(inp) ? JuMP.upper_bound(inp) : Inf
         println(
             @sprintf(
-                "%d\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\tvar",
-                i,
-                input_names[i],
-                val,
-                target,
-                err,
-                lb,
-                ub,
+                "%4d %10s %14.6f %14.6f %14.6f %14.6f %14.6f %3s",
+                i, input_names[i], val, target, err, lb, ub, "var",
             )
         )
     else
         kind = isa(inp, Number) ? "const" : "expr"
         println(
             @sprintf(
-                "%d\t%s\t%.6f\t%.6f\t%.6f\t-\t-\t%s",
-                i,
-                input_names[i],
-                val,
-                target,
-                err,
-                kind,
+                "%4d %10s %14.6f %14.6f %14.6f %14s %14s %3s",
+                i, input_names[i], val, target, err, "-", "-", kind,
             )
         )
     end
