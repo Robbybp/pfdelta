@@ -114,6 +114,12 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
     pv_inputs = Any[]
     slack_inputs = Any[]
     branch_inputs = Any[]
+    bus_bounds = Tuple{Float64,Float64}[]
+    pq_bounds = Tuple{Float64,Float64}[]
+    pv_bounds = Tuple{Float64,Float64}[]
+    slack_bounds = Tuple{Float64,Float64}[]
+    branch_bounds = Tuple{Float64,Float64}[]
+
     # Bus inputs
     # bus_type == 3 => reference bus
     # bus_type == 2 => generator (PV) bus
@@ -128,21 +134,42 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
             qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init=0.0)
             append!(pq_inputs, [pd, qd])
             append!(bus_inputs, [pd, qd])
+            # Add trivial bounds to avoid having to branch later on...
+            append!(pq_inputs, [(pd, pd), (qd, qd)])
+            append!(bus_inputs, [(pd, pd), (qd, qd)])
         elseif bus_type == 2
             # Since the input calls for total injection/demand, I sum up generator
             # active power variables at each node.
+            # Note that PV buses can have loads as well.
             pg = (
+                # We don't use init=0 here because there should always be a generator
                 sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx])
-                - sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init=0.0)
+                - sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init = 0.0)
+            )
+            pgl = (
+                sum(ref[:gen][i]["pmin"] for i in ref[:bus_gens][idx])
+                - sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init = 0.0)
+            )
+            pgu = (
+                sum(ref[:gen][i]["pmax"] for i in ref[:bus_gens][idx])
+                - sum(ref[:load][l]["pd"] for l in ref[:bus_loads][idx]; init = 0.0)
             )
             vm = PowerModels.var(pm, :vm, idx)
+            vmin = ref[:bus][idx]["vmin"]
+            vmax = ref[:bus][idx]["vmax"]
             append!(pv_inputs, [pg, vm])
             append!(bus_inputs, [pg, vm])
+            append!(pv_bounds, [(pgl, pgu), (vmin, vmax)])
+            append!(bus_bounds, [(pgl, pgu), (vmin, vmax)])
         elseif bus_type == 3
             va = PowerModels.var(pm, :va, idx)
             vm = PowerModels.var(pm, :vm, idx)
+            vmin = ref[:bus][idx]["vmin"]
+            vmax = ref[:bus][idx]["vmax"]
             append!(slack_inputs, [va, vm])
             append!(bus_inputs, [va, vm])
+            append!(slack_inputs, [(-2pi, 2pi), (vmin, vmax)])
+            append!(bus_inputs, [(-2pi, 2pi), (vmin, vmax)])
         else
             error("Unexpected bus type $(bus_type)")
         end
@@ -157,9 +184,11 @@ function get_inputs(pm::PowerModels.AbstractPowerModel)
         tap = pm.data["branch"][i]["tap"]
         shift = pm.data["branch"][i]["shift"]
         append!(branch_inputs, [r, x, gf, bf, gt, bt, tap, shift])
+        append!(branch_bounds, [(r,r), (x,x), (gf,gf), (bf,bf), (gt,gt), (bt,bt), (tap,tap), (shift,shift)])
     end
     inputs = vcat(bus_inputs, pq_inputs, pv_inputs, slack_inputs, branch_inputs)
-    return inputs
+    bounds = vcat(bus_bounds, pq_bounds, pv_bounds, slack_bounds, branch_bounds)
+    return inputs, bounds
 end
 
 function get_outputs(pm::PowerModels.AbstractPowerModel)
@@ -280,7 +309,7 @@ pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerM
 # 3. Deactivate bounds on ACPF outputs.
 # 4. Add bound constraining _some_ output to be above its limit
 
-inputs = get_inputs(pm)
+inputs, input_bounds = get_inputs(pm)
 outputs = get_outputs(pm)
 input_names = get_input_names(pm)
 n_inputs = length(inputs)
