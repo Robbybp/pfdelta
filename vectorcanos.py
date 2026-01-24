@@ -6,6 +6,17 @@ from core.datasets.pfdelta_variants import PFDeltaCANOS
 from torch_geometric.data import HeteroData
 
 
+NODE_INPUT_KEYS = ["bus", "PQ", "PV", "slack"]
+EDGE_INPUT_KEYS = [("bus", "branch", "bus")]
+
+
+def flatten_input(data):
+    node_inputs = [data[k]["x"].reshape(-1) for k in NODE_INPUT_KEYS]
+    edge_inputs = [data[k]["edge_attr"].reshape(-1) for k in EDGE_INPUT_KEYS]
+    parts = node_inputs + edge_inputs
+    return torch.cat(parts, dim=0)
+
+
 def flatten_input_labels(data) -> torch.Tensor:
     """
     Flatten ground-truth labels to match the ordering of vectorized outputs.
@@ -42,8 +53,8 @@ class VectorCanos(nn.Module):
         self.model = model
         self.template = template
 
-        self.node_input_keys = ["bus", "PQ", "PV", "slack"]
-        self.edge_input_keys = [("bus", "branch", "bus")]
+        self.node_input_keys = NODE_INPUT_KEYS
+        self.edge_input_keys = EDGE_INPUT_KEYS
 
         # Shapes used for slicing/unflattening
         node_input_shapes = [tuple(template[k]["x"].shape) for k in self.node_input_keys]
@@ -61,10 +72,7 @@ class VectorCanos(nn.Module):
         self.casename = out["casename"]
 
     def flatten_input(self, data) -> torch.Tensor:
-        node_inputs = [data[k]["x"].reshape(-1) for k in self.node_input_keys]
-        edge_inputs = [data[k]["edge_attr"].reshape(-1) for k in self.edge_input_keys]
-        parts = node_inputs + edge_inputs
-        return torch.cat(parts, dim=0)
+        return flatten_input(data)
 
     def unflatten_input(self, x_flat: torch.Tensor):
         x_flat = x_flat.to(dtype=torch.float32)

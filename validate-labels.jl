@@ -1,3 +1,11 @@
+"""
+This script validates the labels on input data from the PFΔ case-14
+task 1.1 training dataset. It does this by solving power flow problems with
+PowerModels and computing errors between these solutions and the labels.
+Because it solves an ACPF problem for each of 48k samples, it takes a bit
+of time to run.
+"""
+
 ENV["JULIA_CONDAPKG_BACKEND"] = "Null"
 using JuMP
 using Ipopt
@@ -30,14 +38,22 @@ dataset = PFDeltaCANOS(
     task="1.1",
 )
 dataset_len = PythonCall.pyconvert(Int, PythonCall.pybuiltins.len(dataset))
-#for i in 0:(dataset_len - 1)
-for i in 0:0
+tol = 1e-5
+errors = []
+for i in 0:(dataset_len - 1)
+    println("Sample $i / $dataset_len")
     point = dataset[i]
     y_pf = solve_powerflow(point)
     py_y_data = VC.flatten_input_labels(point).numpy()
     y_data = PythonCall.pyconvert(Vector{Float64}, py_y_data)
     diff = y_data .- y_pf
     maxdiff = maximum(abs.(diff))
-    println("Max diff: $maxdiff")
-    @assert all(diff .<= 1e-5)
+    if maxdiff > tol
+        println("Sample $i, ϵ = $maxdiff")
+        push!(errors, (i, maxdiff))
+    end
+end
+println("Found $(length(errors)) samples with error:")
+for (i, maxdiff) in errors
+    println("Sample $i, ϵ = $maxdiff")
 end
