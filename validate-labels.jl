@@ -4,6 +4,12 @@ task 1.1 training dataset. It does this by solving power flow problems with
 PowerModels and computing errors between these solutions and the labels.
 Because it solves an ACPF problem for each of 48k samples, it takes a bit
 of time to run.
+
+Here is the output of this script, as of 20260124:
+```
+Found 1 samples with error:
+Sample 37506, ϵ = 0.06880697997390817
+```
 """
 
 ENV["JULIA_CONDAPKG_BACKEND"] = "Null"
