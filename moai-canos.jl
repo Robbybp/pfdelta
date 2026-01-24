@@ -13,7 +13,7 @@ import PowerPlots
 
 # Python imports
 PythonCall.pyimport("sys").path.append(pwd())
-PythonCall.pyimport("vectorcanos")
+VC = PythonCall.pyimport("vectorcanos")
 torch = PythonCall.pyimport("torch")
 
 # Load CANOS NN model
@@ -434,7 +434,7 @@ end
 if solved_to_x0
     println()
     println("Solved to a training point x0. Labels are available")
-    py_y_target = nn.flatten_input_labels(py_x0)
+    py_y_target = VC.flatten_input_labels(py_x0)
     y_target = PythonCall.pyconvert(Vector{Float64}, py_y_target)
     diff = y_pf .- y_target
     println("Compare output from PowerModels and CANOS targets")

@@ -6,6 +6,23 @@ from core.datasets.pfdelta_variants import PFDeltaCANOS
 from torch_geometric.data import HeteroData
 
 
+def flatten_input_labels(data) -> torch.Tensor:
+    """
+    Flatten ground-truth labels to match the ordering of vectorized outputs.
+
+    Ordering matches output_keys:
+      bus.y, PQ.y, PV.y, slack.y, (bus, branch, bus).edge_label
+    """
+    parts = [
+        data["bus"].bus_voltages.reshape(-1),
+        data["PQ"].y.reshape(-1),
+        data["PV"].y.reshape(-1),
+        data["slack"].y.reshape(-1),
+        data[("bus", "branch", "bus")].edge_label.reshape(-1),
+    ]
+    return torch.cat(parts, dim=0)
+
+
 class VectorCanos(nn.Module):
     """
     The input vector contains:
@@ -41,6 +58,7 @@ class VectorCanos(nn.Module):
         self.output_shapes = [tuple(out[k].shape) for k in self.output_keys]
         self.output_sizes = [s[0] * s[1] for s in self.output_shapes]
         self.output_dim = sum(self.output_sizes)
+        self.casename = out["casename"]
 
     def flatten_input(self, data) -> torch.Tensor:
         node_inputs = [data[k]["x"].reshape(-1) for k in self.node_input_keys]
@@ -59,8 +77,27 @@ class VectorCanos(nn.Module):
         for i, k in enumerate(keys):
             data[k[0]][k[1]] = chunks[i].view(*self.input_shapes[i])
 
+        # We can't assume these keys are the same between our input and the template.
+        # These are redundant and don't appear to be used by CANOS, so we do not include
+        # them in our input vector.
+        keys_to_remove = [
+            ("bus", "y"),
+            ("bus", "bus_gen"),
+            ("bus", "bus_demand"),
+            ("bus", "bus_voltages"),
+            ("PV", "generation"),
+            ("PV", "demand"),
+            ("PV", "y"),
+            ("PQ", "y"),
+            ("slack", "generation"),
+            ("slack", "demand"),
+            ("slack", "y"),
+        ]
+        for k1, k2 in keys_to_remove:
+            del data[k1][k2]
+
         # "Other keys" that we preserve from template
-        # ... not that these are used by CANOS... maybe used in the loss?
+        # Since we cloned the input data, we presumably don't need to explicitly
         # keys_to_preserve = [
         #    ("bus", "limits"),
         #    ("pv", "generation"),
@@ -84,6 +121,7 @@ class VectorCanos(nn.Module):
         y = dict()
         for i, k in enumerate(self.output_keys):
             y[k] = chunks[i].view(*self.output_shapes[i])
+        y["casename"] = self.casename
         return y
 
     def forward(self, x_flat: torch.Tensor) -> torch.Tensor:
@@ -117,3 +155,17 @@ if __name__ == "__main__":
     y_flat = wrapper(x_flat)
     print(f"input_dim={wrapper.input_dim}  output_dim={wrapper.output_dim}")
     torch.save(wrapper, "vector-canos.pt")
+
+    # Quick loss check on a single sample
+    from core.utils.pf_losses_utils import CANOS_PF_MSE, constraint_violations_loss_pf
+
+    with torch.no_grad():
+        outputs = wrapper.unflatten_output(y_flat)
+        mse_loss = CANOS_PF_MSE()(outputs, sample)
+        constraint_loss = constraint_violations_loss_pf()(outputs, sample)
+        combined_loss = mse_loss + 0.1 * constraint_loss
+        print(
+            f"mse_loss={mse_loss.item():.6f}  "
+            f"constraint_loss={constraint_loss.item():.6f}  "
+            f"combined(λ=0.1)={combined_loss.item():.6f}"
+        )
