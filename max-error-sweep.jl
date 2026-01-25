@@ -1,5 +1,6 @@
 import DataFrames: DataFrame
 import CSV
+import JSON
 
 include("moai-canos-model.jl")
 
@@ -31,6 +32,15 @@ for (i, (bus, sense)) in enumerate(sweep_inputs)
     push!(results, result)
     push!(points, point)
 end
+
+json_array = [
+    Dict("pointtype" => "max-error", "bus" => bus, "sense" => sense, "point" => point)
+    for ((bus, sense), point) in zip(sweep_inputs, points)
+]
+open("max-error-points.json", "w") do io
+    JSON.print(io, json_array, 1)
+end
+println("Wrote adversarial points to max-error-points.json")
 
 df = DataFrame(results)
 CSV.write("max-error-sweep.csv", df)
