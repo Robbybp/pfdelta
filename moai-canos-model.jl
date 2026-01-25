@@ -406,7 +406,9 @@ function solve_maximum_error(i::Int, sense::String)
         "linear_solver" => "ma57",
         "print_user_options" => "yes",
         "tol" => 1e-6,
+        "acceptable_tol" => 1e-4,
         "max_iter" => 500,
+        "print_timing_statistics" => "yes",
     )
     JuMP.set_optimizer(pm.model, ipopt)
     JuMP.optimize!(pm.model)
@@ -433,10 +435,10 @@ function solve_maximum_error(i::Int, sense::String)
         nn_output_value = y_nn[output_idx]
         pf_output_value = JuMP.value(pf_output)
     else
-        point = nothing
-        objective = nothing
-        nn_output_value = nothing
-        pf_output_value = nothing
+        point = missing
+        objective = missing
+        nn_output_value = missing
+        pf_output_value = missing
     end
 
     return point, (;
@@ -450,8 +452,106 @@ function solve_maximum_error(i::Int, sense::String)
         solve_time,
         n_iter,
         nvar,
-        ncon,
+        # Not recording ncon for now because it is not useful -- it counts VNO
+        # as a single constraint.
+        #ncon,
         jacobian_nnz,
         hessian_nnz,
     )
+end
+
+"""
+Solve a minimum-deviation-from-training-point problem where the NN and PF outputs
+at the specified bus are constrained. The NN output is always constrained to be feasible
+(according to bounds on this output specified by the case data) while the PF output
+is constrained to be infeasible. `direction` controls whether we are constraining the
+PF output to be above the upper bound or below the lower bound.
+We constrain the PF output to violate the bound by a margin of 5% (or 0.05, whichever is larger).
+
+Or should I do 0.05 for vm at PQ buses and 0.1 for q at slack and PV buses?
+"""
+function solve_constrained_error(i::Int, direction::String; training_point_index::Int = 0)
+    PythonCall.pyimport("sys").path.append(pwd())
+    VC = PythonCall.pyimport("vectorcanos")
+    torch = PythonCall.pyimport("torch")
+
+    # Load CANOS NN model
+    #modelpath = joinpath("runs", "canos_task_1_1", "canos_k_steps15_hd128_lr5e-4_task_1_1_260116_121912", "model.pt")
+    modelpath = "vectorcanos-trained.pt"
+    nn = torch.load(modelpath, map_location="cpu")
+    predictor = MOAI.PytorchModel(modelpath)
+
+    pm_data = PGLib.pglib("case14")
+    # What happens if I don't load the PFDelta data into PM?
+    # - I think it's fine. All the PM data that I need are are loaded as inputs to CANOS
+    #load_pfd_into_pm!(pm_data, py_x0)
+    pm = PowerModels.instantiate_model(pm_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
+
+    inputs, input_bounds = get_inputs(pm)
+    outputs, output_names = get_outputs(pm)
+    name_to_output_index = Dict(name => i for (i, name) in enumerate(output_names))
+    n_inputs = length(inputs)
+    n_outputs = length(outputs)
+    input_lbs = first.(input_bounds)
+    input_ubs = last.(input_bounds)
+
+    # Delete bounds and inequalities from the original model
+    # I'll re-add bounds on input variables only
+    for var in JuMP.all_variables(pm.model)
+        if JuMP.has_lower_bound(var)
+            JuMP.delete_lower_bound(var)
+        end
+        if JuMP.has_upper_bound(var)
+            JuMP.delete_upper_bound(var)
+        end
+    end
+    for con in MPIN.get_inequality_constraints(pm.model)
+        JuMP.delete(pm.model, con)
+    end
+
+    nonconst_mask = .!isa.(inputs, Number)
+    JuMP.@constraint(pm.model, input_lbs[nonconst_mask] .<= inputs[nonconst_mask] .<= input_ubs[nonconst_mask])
+
+    py_x0 = dataset[0]
+    py_x0_flat = nn.flatten_input(py_x0)
+    x0 = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
+
+    # Minimize 1-norm of difference between inputs and our target inputs.
+    JuMP.@variable(pm.model, input_slack_pos[1:n_inputs] >= 0.0, start = 0.0)
+    JuMP.@variable(pm.model, input_slack_neg[1:n_inputs] >= 0.0, start = 0.0)
+    JuMP.@constraint(pm.model, input_slack_eqn,
+        inputs .- x0 .+ input_slack_pos .- input_slack_neg .== 0.0
+    )
+    JuMP.@objective(pm.model, Min, sum(input_slack_pos .+ input_slack_neg))
+
+    # CANOS constraints
+    # We add these extra variables as a hacky workaround to make all inputs variables.
+    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
+    @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
+    y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
+    pm_to_canos = Dict(zip(outputs, y))
+
+    bustype = pm_data["bus"]["$i"]["bus_type"]
+    if bustype == 1
+        # Since reactive power can be an expression, I can't reliably use var PM.var
+        # to get it. I'd just like to get the corresponding index in the output vector.
+        # Maybe the best way to do this is to look it up from the output names?
+        output_idx = name_to_output_index["pq_vm[$i]"]
+    elseif bustype == 2
+        output_idx = name_to_output_index["pv_qg[$i]"]
+    elseif bustype == 3
+        output_idx = name_to_output_index["slack_qg[$i]"]
+    else
+        error("Unsupported bus type")
+    end
+
+    pf_output = outputs[output_idx]
+    nn_output = y[output_idx]
+    if sense == "min"
+        JuMP.@objective(pm.model, Min, nn_output - pf_output)
+    elseif sense == "max"
+        JuMP.@objective(pm.model, Max, nn_output - pf_output)
+    else
+        error("Unsupported objective sense")
+    end
 end
