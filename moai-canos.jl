@@ -134,6 +134,9 @@ for con in MPIN.get_inequality_constraints(pm.model)
     JuMP.delete(pm.model, con)
 end
 
+nonconst_mask = .!isa.(inputs, Number)
+JuMP.@constraint(pm.model, input_lbs[nonconst_mask] .<= inputs[nonconst_mask] .<= input_ubs[nonconst_mask])
+
 # Minimize 1-norm of difference between inputs and our target inputs.
 JuMP.@variable(pm.model, input_slack_pos[1:n_inputs] >= 0.0, start = 0.0)
 JuMP.@variable(pm.model, input_slack_neg[1:n_inputs] >= 0.0, start = 0.0)
