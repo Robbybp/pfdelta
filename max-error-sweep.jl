@@ -11,7 +11,12 @@ sweep_inputs = reshape(sweep_inputs, *(size(sweep_inputs)...))
 
 points = Any[]
 results = Any[]
-for (bus, sense) in sweep_inputs
+for (i, (bus, sense)) in enumerate(sweep_inputs)
+    println()
+    msg = "Sweep sample $i"
+    println(msg)
+    println(repeat("=", length(msg)))
+    println("Inputs: bus=$bus, sense=$sense")
     point, result = solve_maximum_error(bus, sense)
     # result should contain:
     # - termination status
@@ -20,13 +25,16 @@ for (bus, sense) in sweep_inputs
     # - NN output -- this should be from the NN, independent of the optimization variables
     # - PF output
     # - bus type
+    println("Sweep sample $i result:")
+    display(result)
     result = merge((; bus, sense), result)
     push!(results, result)
     push!(points, point)
-    break
 end
 
 df = DataFrame(results)
 CSV.write("max-error-sweep.csv", df)
+println(df)
+println("Wrote table to max-error-sweep.csv")
 # TODO: Save points to a JSON file
 # I only plan to use these points if I want to evaluate loss or something

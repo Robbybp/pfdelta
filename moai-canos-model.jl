@@ -5,6 +5,7 @@ using PythonCall
 using PowerModels
 using PGLib
 import MathProgIncidence as MPIN
+import MathOptAI as MOAI
 
 PythonCall.pyimport("sys").path.append(@__DIR__)
 VC = PythonCall.pyimport("vectorcanos")
@@ -346,7 +347,6 @@ function solve_maximum_error(i::Int, sense::String)
     inputs, input_bounds = get_inputs(pm)
     outputs, output_names = get_outputs(pm)
     name_to_output_index = Dict(name => i for (i, name) in enumerate(output_names))
-    display(name_to_output_index)
     n_inputs = length(inputs)
     n_outputs = length(outputs)
     input_lbs = first.(input_bounds)
@@ -371,7 +371,7 @@ function solve_maximum_error(i::Int, sense::String)
 
     # CANOS constraints
     # We add these extra variables as a hacky workaround to make all inputs variables.
-    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
+    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = 1.0)
     @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
     y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
 
@@ -397,21 +397,61 @@ function solve_maximum_error(i::Int, sense::String)
         JuMP.@objective(pm.model, Min, nn_output - pf_output)
     elseif sense == "max"
         JuMP.@objective(pm.model, Max, nn_output - pf_output)
+    else
+        error("Unsupported objective sense")
     end
 
-    ipopt = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "linear_solver" => "ma57", "print_user_options" => "yes")
+    ipopt = JuMP.optimizer_with_attributes(
+        Ipopt.Optimizer,
+        "linear_solver" => "ma57",
+        "print_user_options" => "yes",
+        "tol" => 1e-6,
+        "max_iter" => 500,
+    )
     JuMP.set_optimizer(pm.model, ipopt)
     JuMP.optimize!(pm.model)
 
-    point = JuMP.value.(inputs)
-    py_point = torch.tensor(PythonCall.pybuiltins.list(point))
-    py_y_nn = nn(py_point).detach().numpy()
-    y_nn = PythonCall.pyconvert(Vector{Float64}, py_y_nn)
-    println("y_NN (model) = $nn_output = $(JuMP.value(y_nn[output_idx]))")
-    println("y_NN (CANOS) = $nn_output = $(JuMP.value(nn_output))")
-    println("y_PF         = $pf_output = $(JuMP.value(pf_output))")
+    nvar = length(JuMP.all_variables(pm.model))
+    ncon = length(JuMP.all_constraints(pm.model; include_variable_in_set_constraints = true))
+    jacobian_nnz = length(pm.model.moi_backend.optimizer.model.jacobian_sparsity)
+    hessian_nnz = length(pm.model.moi_backend.optimizer.model.hessian_sparsity)
+
+    termination_status = JuMP.termination_status(pm.model)
+    primal_status = JuMP.primal_status(pm.model)
+    solve_time = JuMP.solve_time(pm.model)
+    n_iter = JuMP.MOI.get(pm.model, JuMP.MOI.BarrierIterations())
+    println("Termination status: $termination_status")
+    if primal_status in (JuMP.FEASIBLE_POINT, JuMP.NEARLY_FEASIBLE_POINT)
+        point = JuMP.value.(inputs)
+        objective = JuMP.objective_value(pm.model)
+        py_point = torch.tensor(PythonCall.pybuiltins.list(point))
+        py_y_nn = nn(py_point).detach().numpy()
+        y_nn = PythonCall.pyconvert(Vector{Float64}, py_y_nn)
+        println("y_NN (model) = $nn_output = $(JuMP.value(y_nn[output_idx]))")
+        println("y_NN (CANOS) = $nn_output = $(JuMP.value(nn_output))")
+        println("y_PF         = $pf_output = $(JuMP.value(pf_output))")
+        nn_output_value = y_nn[output_idx]
+        pf_output_value = JuMP.value(pf_output)
+    else
+        point = nothing
+        objective = nothing
+        nn_output_value = nothing
+        pf_output_value = nothing
+    end
 
     return point, (;
-        termination_status = JuMP.termination_status(pm.model),
+        termination_status,
+        primal_status,
+        objective,
+        bustype,
+        output_idx,
+        nn_output = nn_output_value,
+        pf_output = pf_output_value,
+        solve_time,
+        n_iter,
+        nvar,
+        ncon,
+        jacobian_nnz,
+        hessian_nnz,
     )
 end
