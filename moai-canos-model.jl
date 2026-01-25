@@ -100,6 +100,9 @@ end
 Collect CANOS-style output variables/expressions from a PowerModels model, in
 the same order as moai-canos.jl vectorization: bus (va, vm), PQ (va, vm),
 PV (va, qg), slack (net_p, net_q), branch (pf, qf, pt, qt).
+
+Returns a tuple `(outputs, names)` where `names` matches the ordering of
+`outputs` (e.g., `va[1]`, `vm[1]`, `pf_fr[2]`, etc.).
 """
 function get_outputs(pm::PowerModels.AbstractPowerModel)
     ref = pm.ref[:it][:pm][:nw][0]
@@ -112,6 +115,12 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
     slack_out = Any[]
     branch_out = Any[]
 
+    bus_names = String[]
+    pq_names = String[]
+    pv_names = String[]
+    slack_names = String[]
+    branch_names = String[]
+
     for buskey in buskeys
         idx = parse(Int, buskey)
         bus_type = pm.data["bus"][buskey]["bus_type"]
@@ -119,14 +128,17 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
         va = PowerModels.var(pm, :va, idx)
         vm = PowerModels.var(pm, :vm, idx)
         append!(bus_out, [va, vm])
+        append!(bus_names, ["va[$idx]", "vm[$idx]"])
 
         if bus_type == 1
             append!(pq_out, [va, vm])
+            append!(pq_names, ["pq_va[$idx]", "pq_vm[$idx]"])
         elseif bus_type == 2
             qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)
             qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init=0.0)
             net_q = qg - qd
             append!(pv_out, [net_q, va])
+            append!(pv_names, ["pv_qg[$idx]", "pv_va[$idx]"])
         elseif bus_type == 3
             pg = sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx]; init=0.0)
             qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)
@@ -135,6 +147,7 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
             net_p = pg - pd
             net_q = qg - qd
             append!(slack_out, [net_p, net_q])
+            append!(slack_names, ["slack_pg[$idx]", "slack_qg[$idx]"])
         else
             error("Unexpected bus type $(bus_type)")
         end
@@ -153,9 +166,15 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
                 PowerModels.var(pm, :q, (idx, tbus, fbus)),
             ],
         )
+        append!(
+            branch_names,
+            ["pf_fr[$idx]", "qf_fr[$idx]", "pf_to[$idx]", "qf_to[$idx]"],
+        )
     end
 
-    return vcat(bus_out, pq_out, pv_out, slack_out, branch_out)
+    outputs = vcat(bus_out, pq_out, pv_out, slack_out, branch_out)
+    names = vcat(bus_names, pq_names, pv_names, slack_names, branch_names)
+    return outputs, names
 end
 
 """
@@ -282,7 +301,7 @@ function solve_powerflow(point)
     end
     inputs, input_bounds = get_inputs(pm)
     n_inputs = length(inputs)
-    outputs = get_outputs(pm)
+    outputs, output_names = get_outputs(pm)
     n_outputs = length(outputs)
 
     py_x0 = VC.flatten_input(point).numpy()
@@ -298,7 +317,7 @@ function solve_powerflow(point)
     # build-pf implementation
     # -----------------------
     #pm = PowerModels.instantiate_model(pm_data, PowerModels.ACPPowerModel, PowerModels.build_pf)
-    #outputs = get_outputs(pm)
+    #outputs, output_names = get_outputs(pm)
 
     ipopt = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "linear_solver" => "ma27")
     JuMP.set_optimizer(pm.model, ipopt)
@@ -318,14 +337,16 @@ function solve_maximum_error(i::Int, sense::String)
     nn = torch.load(modelpath, map_location="cpu")
     predictor = MOAI.PytorchModel(modelpath)
 
-    pglib_data = PGLib.pglib("case14")
+    pm_data = PGLib.pglib("case14")
     # What happens if I don't load the PFDelta data into PM?
     # - I think it's fine. All the PM data that I need are are loaded as inputs to CANOS
-    #load_pfd_into_pm!(pglib_data, py_x0)
-    pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
+    #load_pfd_into_pm!(pm_data, py_x0)
+    pm = PowerModels.instantiate_model(pm_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
 
     inputs, input_bounds = get_inputs(pm)
-    outputs = get_outputs(pm)
+    outputs, output_names = get_outputs(pm)
+    name_to_output_index = Dict(name => i for (i, name) in enumerate(output_names))
+    display(name_to_output_index)
     n_inputs = length(inputs)
     n_outputs = length(outputs)
     input_lbs = first.(input_bounds)
@@ -353,21 +374,44 @@ function solve_maximum_error(i::Int, sense::String)
     @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
     @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
     y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
-    pm_to_canos = Dict(zip(outputs, y))
 
     # Which objective we add depends on the type of bus. For PV and slack buses,
     # we maximize the difference in reactive power. For PQ buses, we maximize the
     # difference in voltage magnitude.
     bustype = pm_data["bus"]["$i"]["bus_type"]
-    if bustype in (2, 3)
+    if bustype == 1
         # Since reactive power can be an expression, I can't reliably use var PM.var
         # to get it. I'd just like to get the corresponding index in the output vector.
         # Maybe the best way to do this is to look it up from the output names?
-        var_pm = PowerModels.var()
-    elseif bustype == 1
-        var_pm = PowerModels.var(pm, :vm, i)
-        var_nn = pm_to_canos[vm_pm]
+        output_idx = name_to_output_index["pq_vm[$i]"]
+    elseif bustype == 2
+        output_idx = name_to_output_index["pv_qg[$i]"]
+    elseif bustype == 3
+        output_idx = name_to_output_index["slack_qg[$i]"]
     else
         error("Unsupported bus type")
     end
+    pf_output = outputs[output_idx]
+    nn_output = y[output_idx]
+    if sense == "min"
+        JuMP.@objective(pm.model, Min, nn_output - pf_output)
+    elseif sense == "max"
+        JuMP.@objective(pm.model, Max, nn_output - pf_output)
+    end
+
+    ipopt = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "linear_solver" => "ma57", "print_user_options" => "yes")
+    JuMP.set_optimizer(pm.model, ipopt)
+    JuMP.optimize!(pm.model)
+
+    point = JuMP.value.(inputs)
+    py_point = torch.tensor(PythonCall.pybuiltins.list(point))
+    py_y_nn = nn(py_point).detach().numpy()
+    y_nn = PythonCall.pyconvert(Vector{Float64}, py_y_nn)
+    println("y_NN (model) = $nn_output = $(JuMP.value(y_nn[output_idx]))")
+    println("y_NN (CANOS) = $nn_output = $(JuMP.value(nn_output))")
+    println("y_PF         = $pf_output = $(JuMP.value(pf_output))")
+
+    return point, (;
+        termination_status = JuMP.termination_status(pm.model),
+    )
 end
