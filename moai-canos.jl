@@ -110,7 +110,7 @@ pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerM
 # 4. Add bound constraining _some_ output to be above its limit
 
 inputs, input_bounds = get_inputs(pm)
-outputs = get_outputs(pm)
+outputs, output_names = get_outputs(pm)
 input_names = get_input_names(pm)
 n_inputs = length(inputs)
 n_outputs = length(outputs)
@@ -119,7 +119,7 @@ n_outputs = length(outputs)
 input_lbs = first.(input_bounds)
 input_ubs = last.(input_bounds)
 @assert all(input_lbs .- 1e-5 .<= x0 .<= input_ubs .+ 1e-5)
-#print_x_with_bounds(x0, input_bounds, input_names)
+print_x_with_bounds(x0, input_bounds, input_names)
 
 # Delete bounds and inequalities from the original model
 for var in JuMP.all_variables(pm.model)
@@ -136,6 +136,7 @@ end
 
 nonconst_mask = .!isa.(inputs, Number)
 JuMP.@constraint(pm.model, input_lbs[nonconst_mask] .<= inputs[nonconst_mask] .<= input_ubs[nonconst_mask])
+#print_x_with_bounds(x0, input_bounds, input_names)
 
 # Minimize 1-norm of difference between inputs and our target inputs.
 JuMP.@variable(pm.model, input_slack_pos[1:n_inputs] >= 0.0, start = 0.0)
