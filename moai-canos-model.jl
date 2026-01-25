@@ -122,18 +122,28 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
     slack_names = String[]
     branch_names = String[]
 
+    bus_bounds = Tuple{Float64,Float64}[]
+    pq_bounds = Tuple{Float64,Float64}[]
+    pv_bounds = Tuple{Float64,Float64}[]
+    slack_bounds = Tuple{Float64,Float64}[]
+    branch_bounds = Tuple{Float64,Float64}[]
+
     for buskey in buskeys
         idx = parse(Int, buskey)
         bus_type = pm.data["bus"][buskey]["bus_type"]
 
         va = PowerModels.var(pm, :va, idx)
         vm = PowerModels.var(pm, :vm, idx)
+        vmin = pm.data["bus"][buskey]["vmin"]
+        vmax = pm.data["bus"][buskey]["vmax"]
         append!(bus_out, [va, vm])
         append!(bus_names, ["va[$idx]", "vm[$idx]"])
+        append!(bus_bounds, [(-2pi, 2pi), (vmin, vmax)])
 
         if bus_type == 1
             append!(pq_out, [va, vm])
             append!(pq_names, ["pq_va[$idx]", "pq_vm[$idx]"])
+            append!(pq_bounds, [(-2pi, 2pi), (vmin, vmax)])
         elseif bus_type == 2
             qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)
             qd = sum(ref[:load][l]["qd"] for l in ref[:bus_loads][idx]; init=0.0)
@@ -481,10 +491,25 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     nn = torch.load(modelpath, map_location="cpu")
     predictor = MOAI.PytorchModel(modelpath)
 
+    # Load dataset that we will use for target data
+    pfdelta_variants = PythonCall.pyimport("core.datasets.pfdelta_variants")
+    PFDeltaCANOS = pfdelta_variants.PFDeltaCANOS
+    root_dir = joinpath("data", "pfdelta_data")
+    dataset = PFDeltaCANOS(
+        add_bus_type=true,
+        case_name="case14",
+        model="CANOS",
+        root_dir=root_dir,
+        split="train",
+        task="1.1",
+    )
+
+    py_x0 = dataset[training_point_index]
+    py_x0_flat = nn.flatten_input(py_x0)
+    x0 = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
+
     pm_data = PGLib.pglib("case14")
-    # What happens if I don't load the PFDelta data into PM?
-    # - I think it's fine. All the PM data that I need are are loaded as inputs to CANOS
-    #load_pfd_into_pm!(pm_data, py_x0)
+    load_pfd_into_pm!(pm_data, py_x0)
     pm = PowerModels.instantiate_model(pm_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
 
     inputs, input_bounds = get_inputs(pm)
@@ -512,10 +537,6 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     nonconst_mask = .!isa.(inputs, Number)
     JuMP.@constraint(pm.model, input_lbs[nonconst_mask] .<= inputs[nonconst_mask] .<= input_ubs[nonconst_mask])
 
-    py_x0 = dataset[0]
-    py_x0_flat = nn.flatten_input(py_x0)
-    x0 = PythonCall.pyconvert(Vector{Float64}, py_x0_flat)
-
     # Minimize 1-norm of difference between inputs and our target inputs.
     JuMP.@variable(pm.model, input_slack_pos[1:n_inputs] >= 0.0, start = 0.0)
     JuMP.@variable(pm.model, input_slack_neg[1:n_inputs] >= 0.0, start = 0.0)
@@ -533,25 +554,84 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
 
     bustype = pm_data["bus"]["$i"]["bus_type"]
     if bustype == 1
-        # Since reactive power can be an expression, I can't reliably use var PM.var
-        # to get it. I'd just like to get the corresponding index in the output vector.
-        # Maybe the best way to do this is to look it up from the output names?
+        margin = 0.05
         output_idx = name_to_output_index["pq_vm[$i]"]
     elseif bustype == 2
+        margin = 0.5
         output_idx = name_to_output_index["pv_qg[$i]"]
     elseif bustype == 3
+        margin = 0.5
         output_idx = name_to_output_index["slack_qg[$i]"]
     else
         error("Unsupported bus type")
     end
 
-    pf_output = outputs[output_idx]
     nn_output = y[output_idx]
-    if sense == "min"
-        JuMP.@objective(pm.model, Min, nn_output - pf_output)
-    elseif sense == "max"
-        JuMP.@objective(pm.model, Max, nn_output - pf_output)
+    pf_output = outputs[output_idx]
+
+    # Here I constraint all of the NN outputs to be within their bounds.
+    # I could also only apply these bounds to our target index.
+    JuMP.@constraint(pm.model, output_lbs .<= y .<= output_ubs)
+
+    if direction == "upper"
+        println("Constraining PF output to violate an upper bound")
+        println("Upper bound of output $output_idx = $(output_ubs[output_idx])")
+        con = JuMP.@constraint(pm.model, outputs[output_idx] >= output_ubs[output_idx] + margin)
+        println("Constraint: $con")
+    elseif direction == "lower"
+        println("Constraining PF output to violate a lower bound")
+        println("Lower bound of output $output_idx = $(output_lbs[output_idx])")
+        con = JuMP.@constraint(pm.model, outputs[output_idx] <= output_lbs[output_idx] - margin)
+        println("Constraint: $con")
     else
-        error("Unsupported objective sense")
+        error("direction must be \"upper\" or \"lower\"")
     end
+
+    ipopt = JuMP.optimizer_with_attributes(
+        Ipopt.Optimizer,
+        "linear_solver" => "ma57",
+        "print_user_options" => "yes",
+        "tol" => 1e-6,
+        "acceptable_tol" => 1e-4,
+        "max_iter" => 500,
+        "print_timing_statistics" => "yes",
+    )
+    JuMP.set_optimizer(pm.model, ipopt)
+    JuMP.optimize!(pm.model)
+
+    termination_status = JuMP.termination_status(pm.model)
+    primal_status = JuMP.primal_status(pm.model)
+    solve_time = JuMP.solve_time(pm.model)
+    n_iter = JuMP.MOI.get(pm.model, JuMP.MOI.BarrierIterations())
+    println("Termination status: $termination_status")
+
+    point = JuMP.value.(inputs)
+    objective = JuMP.objective_value(pm.model)
+    py_point = torch.tensor(PythonCall.pybuiltins.list(point))
+    py_y_nn = nn(py_point).detach().numpy()
+    y_nn = PythonCall.pyconvert(Vector{Float64}, py_y_nn)
+    println("y_NN (model) = $nn_output = $(JuMP.value(nn_output))")
+    println("y_NN (CANOS) = $nn_output = $(JuMP.value(y_nn[output_idx]))")
+    println("y_PF         = $pf_output = $(JuMP.value(pf_output))")
+    nn_output_value = y_nn[output_idx]
+    pf_output_value = JuMP.value(pf_output)
+
+    # TODO: record outputs
+    return point, (;
+        termination_status,
+        primal_status,
+        objective,
+        bustype,
+        output_idx,
+        nn_output = nn_output_value,
+        pf_output = pf_output_value,
+        solve_time,
+        n_iter,
+        #nvar,
+        ## Not recording ncon for now because it is not useful -- it counts VNO
+        ## as a single constraint.
+        ##ncon,
+        #jacobian_nnz,
+        #hessian_nnz,
+    )
 end
