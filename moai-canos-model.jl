@@ -306,3 +306,68 @@ function solve_powerflow(point)
     JuMP.optimize!(pm.model)
     return JuMP.value.(outputs)
 end
+
+function solve_maximum_error(i::Int, sense::String)
+    PythonCall.pyimport("sys").path.append(pwd())
+    VC = PythonCall.pyimport("vectorcanos")
+    torch = PythonCall.pyimport("torch")
+
+    # Load CANOS NN model
+    #modelpath = joinpath("runs", "canos_task_1_1", "canos_k_steps15_hd128_lr5e-4_task_1_1_260116_121912", "model.pt")
+    modelpath = "vectorcanos-trained.pt"
+    nn = torch.load(modelpath, map_location="cpu")
+    predictor = MOAI.PytorchModel(modelpath)
+
+    pglib_data = PGLib.pglib("case14")
+    # What happens if I don't load the PFDelta data into PM?
+    # - I think it's fine. All the PM data that I need are are loaded as inputs to CANOS
+    #load_pfd_into_pm!(pglib_data, py_x0)
+    pm = PowerModels.instantiate_model(pglib_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
+
+    inputs, input_bounds = get_inputs(pm)
+    outputs = get_outputs(pm)
+    n_inputs = length(inputs)
+    n_outputs = length(outputs)
+    input_lbs = first.(input_bounds)
+    input_ubs = last.(input_bounds)
+
+    # Delete bounds and inequalities from the original model
+    # I'll re-add bounds on input variables only
+    for var in JuMP.all_variables(pm.model)
+        if JuMP.has_lower_bound(var)
+            JuMP.delete_lower_bound(var)
+        end
+        if JuMP.has_upper_bound(var)
+            JuMP.delete_upper_bound(var)
+        end
+    end
+    for con in MPIN.get_inequality_constraints(pm.model)
+        JuMP.delete(pm.model, con)
+    end
+
+    nonconst_mask = .!isa.(inputs, Number)
+    JuMP.@constraint(pm.model, input_lbs[nonconst_mask] .<= inputs[nonconst_mask] .<= input_ubs[nonconst_mask])
+
+    # CANOS constraints
+    # We add these extra variables as a hacky workaround to make all inputs variables.
+    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
+    @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
+    y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
+    pm_to_canos = Dict(zip(outputs, y))
+
+    # Which objective we add depends on the type of bus. For PV and slack buses,
+    # we maximize the difference in reactive power. For PQ buses, we maximize the
+    # difference in voltage magnitude.
+    bustype = pm_data["bus"]["$i"]["bus_type"]
+    if bustype in (2, 3)
+        # Since reactive power can be an expression, I can't reliably use var PM.var
+        # to get it. I'd just like to get the corresponding index in the output vector.
+        # Maybe the best way to do this is to look it up from the output names?
+        var_pm = PowerModels.var()
+    elseif bustype == 1
+        var_pm = PowerModels.var(pm, :vm, i)
+        var_nn = pm_to_canos[vm_pm]
+    else
+        error("Unsupported bus type")
+    end
+end
