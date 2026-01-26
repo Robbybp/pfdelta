@@ -13,6 +13,7 @@ from typing import Iterable, Tuple
 import sys
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 import pandas as pd
 
@@ -56,14 +57,48 @@ def main(argv: Iterable[str]) -> None:
         print("No objective values to plot.")
         return
 
-    plt.figure(figsize=(8, 4))
-    plt.hist(conv_obj, bins=30, color="#4C72B0", edgecolor="white")
-    plt.xlabel("Objective")
-    plt.ylabel("Count")
-    plt.title("Objective Histogram (Converged)")
-    plt.tight_layout()
-    plt.savefig(outfile, dpi=200, transparent=True)
-    print(f"Saved histogram to {outfile}")
+    vmin, vmax = conv_obj.min(), conv_obj.max()
+    if vmax <= 7 or vmin >= 3:
+        plt.figure(figsize=(8, 4))
+        plt.hist(conv_obj, bins=30, color="#4C72B0", edgecolor="white")
+        plt.xlabel("Objective")
+        plt.ylabel("Count")
+        plt.title("Objective Histogram (Converged)")
+        plt.tight_layout()
+        plt.savefig(outfile, dpi=200, transparent=True)
+        print(f"Saved histogram to {outfile}")
+        return
+
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(5, 4), sharey=True, gridspec_kw={"width_ratios": [3, 2]}
+    )
+    bins = np.linspace(vmin, vmax, 30)
+    ax1.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
+    ax2.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
+
+    ax1.set_xlim(vmin, 2.5)
+    ax2.set_xlim(7, vmax)
+
+    ax1.spines["right"].set_visible(False)
+    ax2.spines["left"].set_visible(False)
+    ax1.yaxis.tick_left()
+    ax2.yaxis.tick_right()
+
+    d = 0.015
+    kwargs = dict(transform=ax1.transAxes, color="k", clip_on=False, linewidth=1.0)
+    ax1.plot((1 - d, 1 + d), (-d, +d), **kwargs)
+    ax1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
+    kwargs.update(transform=ax2.transAxes)
+    ax2.plot((-d, +d), (-d, +d), **kwargs)
+    ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)
+
+    fig.suptitle("Objective Histogram (Converged)")
+    ax1.set_ylabel("Count")
+    ax1.set_xlabel("Objective")
+    ax2.set_xlabel("Objective")
+    fig.tight_layout()
+    fig.savefig(outfile, dpi=200, transparent=True)
+    print(f"Saved histogram with broken x-axis to {outfile}")
 
 
 if __name__ == "__main__":
