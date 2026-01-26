@@ -1,6 +1,7 @@
 import os
 import torch
 from torch import nn
+from typing import List
 from core.models.canos_pf import CANOS_PF
 from core.datasets.pfdelta_variants import PFDeltaCANOS
 from torch_geometric.data import HeteroData
@@ -138,6 +139,64 @@ class VectorCanos(nn.Module):
         return self.flatten_output(out)
 
 
+def get_flattened_input_names(template) -> List[str]:
+    """
+    Return human-readable names for each entry of the flattened input vector, matching
+    the ordering used by `flatten_input`.
+
+    Naming scheme:
+      - bus.x (all buses, in bus_id order):
+          PQ bus:  ["pd[bus]", "qd[bus]"]
+          PV bus:  ["p_net[bus]", "vm[bus]"]       where p_net = pg - pd
+          slack:   ["va[bus]", "vm[bus]"]
+      - PQ.x   (in PQ_link order): ["pq_pd[bus]", "pq_qd[bus]"]
+      - PV.x   (in PV_link order): ["pv_p_net[bus]", "pv_vm[bus]"]
+      - slack.x (in slack_link order): ["slack_va[bus]", "slack_vm[bus]"]
+      - edge_attr (branch order): ["r[f->t]", "x[f->t]", "g_fr[f->t]", "b_fr[f->t]",
+                                   "g_to[f->t]", "b_to[f->t]", "tap[f->t]", "shift[f->t]"]
+    """
+
+    def bus_feature_names(bus_type: int):
+        if bus_type == 1:  # PQ
+            return ["pd", "qd"]
+        if bus_type == 2:  # PV
+            return ["p_net", "vm"]
+        if bus_type == 3:  # slack
+            return ["va", "vm"]
+        return [f"feat0_type{bus_type}", f"feat1_type{bus_type}"]
+
+    names: List[str] = []
+
+    bus_types = template["bus"].bus_type.reshape(-1).tolist()
+    for i, bt in enumerate(bus_types, start=1):  # bus ids are 1-based
+        for feat in bus_feature_names(int(bt)):
+            names.append(f"{feat}[{i}]")
+
+    #def append_node_block(block_key: str, feature_labels, link_key):
+    #    #if block_key not in template or link_key not in template:
+    #    #    return
+    #    bus_indices = template[link_key].edge_index[1].tolist()  # target bus indices (0-based)
+    #    for bus_idx in bus_indices:
+    #        for feat in feature_labels:
+    #            names.append(f"{feat}[{bus_idx+1}]")
+
+    #append_node_block("PQ", ["pq_pd", "pq_qd"], ("PQ", "PQ_link", "bus"))
+    #append_node_block("PV", ["pv_p_net", "pv_vm"], ("PV", "PV_link", "bus"))
+    #append_node_block("slack", ["slack_va", "slack_vm"], ("slack", "slack_link", "bus"))
+
+    #edge_key = ("bus", "branch", "bus")
+    ##if edge_key in template:
+    #edge_index = template[edge_key].edge_index
+    #attr_names = ["r", "x", "g_fr", "b_fr", "g_to", "b_to", "tap", "shift"]
+    #for col in range(edge_index.shape[1]):
+    #    f_bus = int(edge_index[0, col]) + 1
+    #    t_bus = int(edge_index[1, col]) + 1
+    #    for attr in attr_names:
+    #        names.append(f"{attr}[{f_bus}->{t_bus}]")
+
+    return names
+
+
 if __name__ == "__main__":
     torch.manual_seed(48)
     dataset = PFDeltaCANOS(
@@ -177,3 +236,8 @@ if __name__ == "__main__":
             f"constraint_loss={constraint_loss.item():.6f}  "
             f"combined(λ=0.1)={combined_loss.item():.6f}"
         )
+
+    print(wrapper.template)
+    print("Input names:")
+    for i, name in enumerate(get_flattened_input_names(wrapper.template)):
+        print(f"{i:2}: {name}")
