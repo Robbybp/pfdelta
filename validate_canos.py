@@ -22,6 +22,7 @@ PB           mean=0.038077  max=0.169933  std=0.006189
 """
 import os
 import torch
+from torch_geometric.loader import DataLoader
 from core.models.canos_pf import CANOS_PF
 from core.datasets.pfdelta_variants import PFDeltaCANOS
 from core.utils.pf_losses_utils import (
@@ -54,25 +55,35 @@ canos_state = torch.load(modelpath, map_location="cpu")
 canos.load_state_dict(canos_state)
 canos.eval()
 
-NSAMPLES = 1000
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+canos.to(device)
+
+batch_size = 10000
+loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+NSAMPLES = None  # set to int to truncate
 
 pbl = PowerBalanceLoss("CANOS")
 mse_vals = []
 con_vals = []
 pb_vals = []
-for i, point in enumerate(dataset):
-    nbus, _ = point["bus"].x.shape
-    point["bus"].batch = torch.tensor([0]*nbus)
-    output = canos(point)
-    mse_loss = CANOS_PF_MSE()(output, point)
-    con_loss = constraint_violations_loss_pf()(output, point)
-    pb_loss = pbl(output, point)
-    mse_vals.append(float(mse_loss))
-    con_vals.append(float(con_loss))
-    pb_vals.append(float(pb_loss))
-    #print(f"Sample {i}: MSE = {mse_loss}, Constraint violation = {con_loss}, PB violation = {pb_loss}")
-    if i == NSAMPLES:
-        break
+
+with torch.no_grad():
+    total_seen = 0
+    for i, batch in enumerate(loader):
+        print(f"Batch {i}")
+        batch = batch.to(device)
+        output = canos(batch)
+        mse_loss = CANOS_PF_MSE()(output, batch)
+        con_loss = constraint_violations_loss_pf()(output, batch)
+        pb_loss = pbl(output, batch)
+        # record per-batch scalar; optionally expand per-sample if needed
+        mse_vals.append(float(mse_loss))
+        con_vals.append(float(con_loss))
+        pb_vals.append(float(pb_loss))
+        total_seen += batch.num_graphs if hasattr(batch, "num_graphs") else batch_size
+        if NSAMPLES is not None and total_seen >= NSAMPLES:
+            break
 
 def summarize(name, vals):
     t = torch.tensor(vals)
