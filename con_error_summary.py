@@ -4,10 +4,13 @@ Summarize adversarially-constrained error runs by training point.
 
 For each training_point_index, report:
   - problems converged (primal_status in {FEASIBLE_POINT, NEARLY_FEASIBLE_POINT})
-  - average objective (distance)
+  - average 1-norm distance between adversarial and training point (computed directly)
+  - average support (number of coords differing above 1e-4)
   - average NN output
   - average PF output
 """
+import json
+import os
 from pathlib import Path
 from typing import Iterable, Tuple
 import sys
@@ -22,53 +25,109 @@ plt.rcParams["font.family"] = "serif"
 
 CONVERGED_STATUSES: Tuple[str, ...] = ("FEASIBLE_POINT", "NEARLY_FEASIBLE_POINT")
 
-def summarize(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
+def load_dataset():
+    from core.datasets.pfdelta_variants import PFDeltaCANOS
+    return PFDeltaCANOS(
+        add_bus_type=True,
+        case_name="case14",
+        model="CANOS",
+        root_dir=os.path.join("data", "pfdelta_data"),
+        split="train",
+        task="1.1",
+    )
+
+def flatten_training_point(sample):
+    from vectorcanos import flatten_input
+    return flatten_input(sample).detach().cpu().numpy()
+
+def compute_distances(csv_path: Path, points_path: Path) -> pd.DataFrame:
+    pts = json.loads(points_path.read_text())
+    pts_lookup = {
+        (int(p["training_point_index"]), int(p["bus"])): np.asarray(p["point"], float)
+        for p in pts
+    }
+
+    df = pd.read_csv(csv_path)
     converged = df[df["primal_status"].isin(CONVERGED_STATUSES)].copy()
 
+    dataset = load_dataset()
+
+    records = []
+    for _, row in converged.iterrows():
+        idx = int(row["training_point_index"])
+        bus = int(row["bus"])
+        key = (idx, bus)
+        if key not in pts_lookup:
+            continue
+        adv = pts_lookup[key]
+        train = flatten_training_point(dataset[idx])
+        if adv.shape != train.shape:
+            continue
+        diff = adv - train
+        l1 = float(np.linalg.norm(diff, ord=1))
+        support = int(np.count_nonzero(np.abs(diff) > 1e-4))
+        records.append(
+            {
+                "training_point_index": idx,
+                "bus": bus,
+                "distance_l1": l1,
+                "support": support,
+                "nn_output": row["nn_output"],
+                "pf_output": row["pf_output"],
+            }
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def summarize(dist_df: pd.DataFrame) -> pd.DataFrame:
+    if dist_df.empty:
+        return dist_df
     grouped = (
-        converged.groupby("training_point_index")
+        dist_df.groupby("training_point_index")
         .agg(
-            converged=("primal_status", "size"),
-            avg_objective=("objective", "mean"),
+            converged=("bus", "size"),
+            avg_distance_l1=("distance_l1", "mean"),
+            avg_support=("support", "mean"),
             avg_nn_output=("nn_output", "mean"),
             avg_pf_output=("pf_output", "mean"),
         )
         .reset_index()
         .sort_values("training_point_index")
     )
+    grouped["avg_support"] = grouped["avg_support"].round()
     return grouped
 
 
 def main(argv: Iterable[str]) -> None:
     infile = Path(argv[1]) if len(argv) > 1 else Path("con-error-sweep.csv")
-    outfile = Path(argv[2]) if len(argv) > 2 else Path("distance-histogram.pdf")
+    points_path = Path(argv[2]) if len(argv) > 2 else Path("con-error-points.json")
+    outfile = Path(argv[3]) if len(argv) > 3 else Path("distance-histogram.pdf")
 
-    summary = summarize(infile)
+    dist_df = compute_distances(infile, points_path)
+    summary = summarize(dist_df)
     if summary.empty:
         print("No converged rows found.")
         return
 
     print(summary.to_string(index=False, float_format=lambda x: f"{x:.6f}"))
 
-    # Histogram over all converged objective values (drop missing)
-    df = pd.read_csv(infile)
-    conv_obj = df[df["primal_status"].isin(CONVERGED_STATUSES)]["objective"].dropna()
+    # Histogram over all converged L1 distances
+    conv_obj = dist_df["distance_l1"].dropna()
     if conv_obj.empty:
-        print("No objective values to plot.")
+        print("No distance values to plot.")
         return
 
     vmin, vmax = conv_obj.min(), conv_obj.max()
-    if vmax <= 7 or vmin >= 3:
-        fig = plt.figure(figsize=(8, 4))
-        plt.hist(conv_obj, bins=30, color="#4C72B0", edgecolor="white")
-        plt.xlabel("Objective")
-        plt.ylabel("Count")
-        #fig.supxlabel("Objective", y=0.02)
-        fig.tight_layout()
-        fig.savefig(outfile, dpi=200, transparent=True)
-        print(f"Saved histogram to {outfile}")
-        return
+    #if vmax <= 7 or vmin >= 3:
+    #    fig = plt.figure(figsize=(8, 4))
+    #    plt.hist(conv_obj, bins=30, color="#4C72B0", edgecolor="white")
+    #    plt.xlabel("Objective")
+    #    plt.ylabel("Count")
+    #    #fig.supxlabel("Objective", y=0.02)
+    #    fig.tight_layout()
+    #    fig.savefig(outfile, dpi=200, transparent=True)
+    #    print(f"Saved histogram to {outfile}")
+    #    return
 
     fig, (ax1, ax2) = plt.subplots(
         1, 2, figsize=(5, 4), sharey=True, gridspec_kw={"width_ratios": [3, 2]}
@@ -77,8 +136,8 @@ def main(argv: Iterable[str]) -> None:
     ax1.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
     ax2.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
 
-    ax1.set_xlim(vmin, 2.5)
-    ax2.set_xlim(7, vmax)
+    ax1.set_xlim(0.0, 0.9)
+    ax2.set_xlim(1.75, 2.25)
 
     ax1.spines["right"].set_visible(False)
     ax2.spines["left"].set_visible(False)
