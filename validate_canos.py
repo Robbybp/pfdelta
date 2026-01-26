@@ -58,32 +58,25 @@ canos.eval()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 canos.to(device)
 
-batch_size = 10000
-loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+batch_size = 512
 
-NSAMPLES = None  # set to int to truncate
 
-pbl = PowerBalanceLoss("CANOS")
-mse_vals = []
-con_vals = []
-pb_vals = []
+def evaluate_loader(loader, device):
+    pbl = PowerBalanceLoss("CANOS")
+    mse_vals, con_vals, pb_vals = [], [], []
+    with torch.no_grad():
+        for i, batch in enumerate(loader):
+            print(f"Batch {i}")
+            batch = batch.to(device)
+            output = canos(batch)
+            mse_loss = CANOS_PF_MSE()(output, batch)
+            con_loss = constraint_violations_loss_pf()(output, batch)
+            pb_loss = pbl(output, batch)
+            mse_vals.append(float(mse_loss))
+            con_vals.append(float(con_loss))
+            pb_vals.append(float(pb_loss))
+    return mse_vals, con_vals, pb_vals
 
-with torch.no_grad():
-    total_seen = 0
-    for i, batch in enumerate(loader):
-        print(f"Batch {i}")
-        batch = batch.to(device)
-        output = canos(batch)
-        mse_loss = CANOS_PF_MSE()(output, batch)
-        con_loss = constraint_violations_loss_pf()(output, batch)
-        pb_loss = pbl(output, batch)
-        # record per-batch scalar; optionally expand per-sample if needed
-        mse_vals.append(float(mse_loss))
-        con_vals.append(float(con_loss))
-        pb_vals.append(float(pb_loss))
-        total_seen += batch.num_graphs if hasattr(batch, "num_graphs") else batch_size
-        if NSAMPLES is not None and total_seen >= NSAMPLES:
-            break
 
 def summarize(name, vals):
     t = torch.tensor(vals)
@@ -92,7 +85,28 @@ def summarize(name, vals):
     std = t.std(unbiased=False).item()
     print(f"{name:12s} mean={mean:.6f}  max={maxv:.6f}  std={std:.6f}")
 
-print("\nDataset loss summary:")
-summarize("MSE", mse_vals)
-summarize("Constraint", con_vals)
-summarize("PB", pb_vals)
+
+print("\nTrain loss summary:")
+train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+train_mse, train_con, train_pb = evaluate_loader(train_loader, device)
+summarize("MSE", train_mse)
+summarize("Constraint", train_con)
+summarize("PB", train_pb)
+
+print("\nTest loss summary:")
+test_dataset = PFDeltaCANOS(**{**dataset_inputs, "split": "test"})
+test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+test_mse, test_con, test_pb = evaluate_loader(test_loader, device)
+summarize("MSE", test_mse)
+summarize("Constraint", test_con)
+summarize("PB", test_pb)
+
+print("\nTrain loss summary:")
+summarize("MSE", train_mse)
+summarize("Constraint", train_con)
+summarize("PB", train_pb)
+
+print("\nTest loss summary:")
+summarize("MSE", test_mse)
+summarize("Constraint", test_con)
+summarize("PB", test_pb)
