@@ -6,6 +6,7 @@ using PowerModels
 using PGLib
 import MathProgIncidence as MPIN
 import MathOptAI as MOAI
+using Printf
 
 PythonCall.pyimport("sys").path.append(@__DIR__)
 VC = PythonCall.pyimport("vectorcanos")
@@ -134,10 +135,10 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
 
         va = PowerModels.var(pm, :va, idx)
         vm = PowerModels.var(pm, :vm, idx)
-        vmin = pm.data["bus"][buskey]["vmin"]
-        vmax = pm.data["bus"][buskey]["vmax"]
         append!(bus_out, [va, vm])
         append!(bus_names, ["va[$idx]", "vm[$idx]"])
+        vmin = ref[:bus][idx]["vmin"]
+        vmax = ref[:bus][idx]["vmax"]
         append!(bus_bounds, [(-2pi, 2pi), (vmin, vmax)])
 
         if bus_type == 1
@@ -150,6 +151,9 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
             net_q = qg - qd
             append!(pv_out, [net_q, va])
             append!(pv_names, ["pv_qg[$idx]", "pv_va[$idx]"])
+            qmin = sum(ref[:gen][g]["qmin"] for g in ref[:bus_gens][idx]; init=0.0) - qd
+            qmax = sum(ref[:gen][g]["qmax"] for g in ref[:bus_gens][idx]; init=0.0) - qd
+            append!(pv_bounds, [(qmin, qmax), (-2pi, 2pi)])
         elseif bus_type == 3
             pg = sum(PowerModels.var(pm, :pg, g) for g in ref[:bus_gens][idx]; init=0.0)
             qg = sum(PowerModels.var(pm, :qg, g) for g in ref[:bus_gens][idx]; init=0.0)
@@ -159,6 +163,11 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
             net_q = qg - qd
             append!(slack_out, [net_p, net_q])
             append!(slack_names, ["slack_pg[$idx]", "slack_qg[$idx]"])
+            pmin = sum(ref[:gen][g]["pmin"] for g in ref[:bus_gens][idx]; init=0.0) - pd
+            pmax = sum(ref[:gen][g]["pmax"] for g in ref[:bus_gens][idx]; init=0.0) - pd
+            qmin = sum(ref[:gen][g]["qmin"] for g in ref[:bus_gens][idx]; init=0.0) - qd
+            qmax = sum(ref[:gen][g]["qmax"] for g in ref[:bus_gens][idx]; init=0.0) - qd
+            append!(slack_bounds, [(pmin, pmax), (qmin, qmax)])
         else
             error("Unexpected bus type $(bus_type)")
         end
@@ -181,11 +190,62 @@ function get_outputs(pm::PowerModels.AbstractPowerModel)
             branch_names,
             ["pf_fr[$idx]", "qf_fr[$idx]", "pf_to[$idx]", "qf_to[$idx]"],
         )
+        rate = get(ref[:branch][idx], "rate_a", Inf)
+        flow_bounds = isfinite(rate) ? (-rate, rate) : (-Inf, Inf)
+        append!(branch_bounds, [flow_bounds, flow_bounds, flow_bounds, flow_bounds])
     end
 
     outputs = vcat(bus_out, pq_out, pv_out, slack_out, branch_out)
     names = vcat(bus_names, pq_names, pv_names, slack_names, branch_names)
-    return outputs, names
+    bounds = vcat(bus_bounds, pq_bounds, pv_bounds, slack_bounds, branch_bounds)
+    return outputs, names, bounds
+end
+
+function get_input_names(pm::PowerModels.AbstractPowerModel)
+    buskeys = sort(collect(keys(pm.data["bus"])); by=k -> parse(Int, k))
+    branchkeys = sort(collect(keys(pm.data["branch"])); by=k -> parse(Int, k))
+
+    bus_names = String[]
+    pq_names = String[]
+    pv_names = String[]
+    slack_names = String[]
+    branch_names = String[]
+
+    for i in buskeys
+        idx = parse(Int, i)
+        bus_type = pm.data["bus"][i]["bus_type"]
+        if bus_type == 1
+            append!(bus_names, ["bus_pd[$idx]", "bus_qd[$idx]"])
+            append!(pq_names, ["pq_pd[$idx]", "pq_qd[$idx]"])
+        elseif bus_type == 2
+            append!(bus_names, ["bus_pg[$idx]", "bus_vm[$idx]"])
+            append!(pv_names, ["pv_pg[$idx]", "pv_vm[$idx]"])
+        elseif bus_type == 3
+            append!(bus_names, ["bus_va[$idx]", "bus_vm[$idx]"])
+            append!(slack_names, ["slack_va[$idx]", "slack_vm[$idx]"])
+        else
+            error("Unexpected bus type $(bus_type)")
+        end
+    end
+
+    for i in branchkeys
+        idx = parse(Int, i)
+        append!(
+            branch_names,
+            [
+                "br_r[$idx]",
+                "br_x[$idx]",
+                "g_fr[$idx]",
+                "b_fr[$idx]",
+                "g_to[$idx]",
+                "b_to[$idx]",
+                "tap[$idx]",
+                "shift[$idx]",
+            ],
+        )
+    end
+
+    return vcat(bus_names, pq_names, pv_names, slack_names, branch_names)
 end
 
 """
@@ -312,7 +372,7 @@ function solve_powerflow(point)
     end
     inputs, input_bounds = get_inputs(pm)
     n_inputs = length(inputs)
-    outputs, output_names = get_outputs(pm)
+    outputs, output_names, output_bounds = get_outputs(pm)
     n_outputs = length(outputs)
 
     py_x0 = VC.flatten_input(point).numpy()
@@ -355,7 +415,7 @@ function solve_maximum_error(i::Int, sense::String)
     pm = PowerModels.instantiate_model(pm_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
 
     inputs, input_bounds = get_inputs(pm)
-    outputs, output_names = get_outputs(pm)
+    outputs, output_names, output_bounds = get_outputs(pm)
     name_to_output_index = Dict(name => i for (i, name) in enumerate(output_names))
     n_inputs = length(inputs)
     n_outputs = length(outputs)
@@ -424,7 +484,15 @@ function solve_maximum_error(i::Int, sense::String)
     JuMP.optimize!(pm.model)
 
     nvar = length(JuMP.all_variables(pm.model))
-    ncon = length(JuMP.all_constraints(pm.model; include_variable_in_set_constraints = true))
+    ncon = 0
+    for con in JuMP.all_constraints(pm.model; include_variable_in_set_constraints = true)
+        if shape == JuMP.ScalarShape()
+            ncon += 1
+        else
+            vno = JuMP.MOI.get(pm.model, JuMP.MOI.ConstraintSet(), con)
+            ncon += vno.output_dimension
+        end
+    end
     jacobian_nnz = length(pm.model.moi_backend.optimizer.model.jacobian_sparsity)
     hessian_nnz = length(pm.model.moi_backend.optimizer.model.hessian_sparsity)
 
@@ -462,9 +530,7 @@ function solve_maximum_error(i::Int, sense::String)
         solve_time,
         n_iter,
         nvar,
-        # Not recording ncon for now because it is not useful -- it counts VNO
-        # as a single constraint.
-        #ncon,
+        ncon,
         jacobian_nnz,
         hessian_nnz,
     )
@@ -513,7 +579,7 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     pm = PowerModels.instantiate_model(pm_data, PowerModels.ACPPowerModel, PowerModels.build_opf)
 
     inputs, input_bounds = get_inputs(pm)
-    outputs, output_names = get_outputs(pm)
+    outputs, output_names, output_bounds = get_outputs(pm)
     name_to_output_index = Dict(name => i for (i, name) in enumerate(output_names))
     n_inputs = length(inputs)
     n_outputs = length(outputs)
@@ -554,13 +620,13 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
 
     bustype = pm_data["bus"]["$i"]["bus_type"]
     if bustype == 1
-        margin = 0.05
+        margin = direction == "lower" ? 0.04 : 0.02
         output_idx = name_to_output_index["pq_vm[$i]"]
     elseif bustype == 2
-        margin = 0.5
+        margin = 0.1
         output_idx = name_to_output_index["pv_qg[$i]"]
     elseif bustype == 3
-        margin = 0.5
+        margin = 0.1
         output_idx = name_to_output_index["slack_qg[$i]"]
     else
         error("Unsupported bus type")
@@ -569,9 +635,14 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     nn_output = y[output_idx]
     pf_output = outputs[output_idx]
 
-    # Here I constraint all of the NN outputs to be within their bounds.
-    # I could also only apply these bounds to our target index.
-    JuMP.@constraint(pm.model, output_lbs .<= y .<= output_ubs)
+    output_lbs = first.(output_bounds)
+    output_ubs = last.(output_bounds)
+    # Ideally, we constraint all outputs to be feasible, but this seems to make the problem
+    # infeasible. So I'm just constraining the target output for now.
+    # The output values look fine as far as I can tell from quick visual inspection. Are
+    # these bounds unusually restrictive?
+    #JuMP.@constraint(pm.model, output_lbs .<= y .<= output_ubs)
+    JuMP.@constraint(pm.model, output_lbs[output_idx] <= y[output_idx] <= output_ubs[output_idx])
 
     if direction == "upper"
         println("Constraining PF output to violate an upper bound")
@@ -599,22 +670,77 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     JuMP.set_optimizer(pm.model, ipopt)
     JuMP.optimize!(pm.model)
 
+    nvar = length(JuMP.all_variables(pm.model))
+    ncon = 0
+    for con in JuMP.all_constraints(pm.model; include_variable_in_set_constraints = true)
+        if shape == JuMP.ScalarShape()
+            ncon += 1
+        else
+            vno = JuMP.MOI.get(pm.model, JuMP.MOI.ConstraintSet(), con)
+            ncon += vno.output_dimension
+        end
+    end
+    jacobian_nnz = length(pm.model.moi_backend.optimizer.model.jacobian_sparsity)
+    hessian_nnz = length(pm.model.moi_backend.optimizer.model.hessian_sparsity)
+
     termination_status = JuMP.termination_status(pm.model)
     primal_status = JuMP.primal_status(pm.model)
     solve_time = JuMP.solve_time(pm.model)
     n_iter = JuMP.MOI.get(pm.model, JuMP.MOI.BarrierIterations())
     println("Termination status: $termination_status")
 
-    point = JuMP.value.(inputs)
-    objective = JuMP.objective_value(pm.model)
-    py_point = torch.tensor(PythonCall.pybuiltins.list(point))
-    py_y_nn = nn(py_point).detach().numpy()
-    y_nn = PythonCall.pyconvert(Vector{Float64}, py_y_nn)
-    println("y_NN (model) = $nn_output = $(JuMP.value(nn_output))")
-    println("y_NN (CANOS) = $nn_output = $(JuMP.value(y_nn[output_idx]))")
-    println("y_PF         = $pf_output = $(JuMP.value(pf_output))")
-    nn_output_value = y_nn[output_idx]
-    pf_output_value = JuMP.value(pf_output)
+    input_names = get_input_names(pm)
+    if primal_status in (JuMP.FEASIBLE_POINT, JuMP.NEARLY_FEASIBLE_POINT)
+        point = JuMP.value.(inputs)
+        objective = JuMP.objective_value(pm.model)
+        py_point = torch.tensor(PythonCall.pybuiltins.list(point))
+        py_y_nn = nn(py_point).detach().numpy()
+        y_nn = PythonCall.pyconvert(Vector{Float64}, py_y_nn)
+        println("y_NN (model) = $nn_output = $(JuMP.value(nn_output))")
+        println("y_NN (CANOS) = $nn_output = $(JuMP.value(y_nn[output_idx]))")
+        println("y_PF         = $pf_output = $(JuMP.value(pf_output))")
+        nn_output_value = y_nn[output_idx]
+        pf_output_value = JuMP.value(pf_output)
+
+        println()
+        println("Compare deviations from initial input x0")
+        println("----------------------------------------")
+        println(@sprintf(
+            "%4s %10s %14s %14s %14s %14s %14s %3s",
+            "idx", "name", "value", "target", "error", "lb", "ub", "type",
+        ))
+        for i in 1:n_inputs
+            inp = inputs[i]
+            val = isa(inp, Number) ? inp : JuMP.value(inp)
+            target = x0[i]
+            err = abs(val - target)
+            if err <= 1e-4
+                continue
+            end
+            lb, ub = input_bounds[i]
+            if isa(inp, JuMP.VariableRef)
+                println(
+                    @sprintf(
+                        "%4d %10s %14.6f %14.6f %14.6f %14.6f %14.6f %3s",
+                        i, input_names[i], val, target, err, lb, ub, "var",
+                    )
+                )
+            else
+                kind = isa(inp, Number) ? "const" : "expr"
+                println(
+                    @sprintf(
+                        "%4d %10s %14.6f %14.6f %14.6f %14s %14s %3s",
+                        i, input_names[i], val, target, err, lb, ub, kind,
+                    )
+                )
+            end
+        end
+    else
+        point = missing
+        objective = missing
+        nn_output_value = missing
+        pf_output_value = missing
+    end
 
     # TODO: record outputs
     return point, (;
@@ -627,11 +753,9 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
         pf_output = pf_output_value,
         solve_time,
         n_iter,
-        #nvar,
-        ## Not recording ncon for now because it is not useful -- it counts VNO
-        ## as a single constraint.
-        ##ncon,
-        #jacobian_nnz,
-        #hessian_nnz,
+        nvar,
+        ncon,
+        jacobian_nnz,
+        hessian_nnz,
     )
 end
