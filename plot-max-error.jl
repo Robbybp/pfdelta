@@ -34,7 +34,7 @@ plt = powerplot(
     bus = (
         :data => "diff",
         :data_type => "quantitative",
-        :color => PowerPlots.color_schemes[:reds],
+        :color => reverse(PowerPlots.color_schemes[:reds]), # darker for larger values
     ),
     #gen = :data => "ComponentType",   # keep generators distinct if present
     #load = :data => "ComponentType",  # keep loads distinct if present
@@ -43,47 +43,62 @@ plt = powerplot(
     shunt = (:color => "#d3d3d3"),
 )
 
-for l in (4, 5, 6)
+# Force non-PQ buses to gray while keeping PQ buses on reversed red scale
+bus_layer = plt.layer[3]
+color_title = get(bus_layer["encoding"]["color"], "title", "Bus")
+bus_layer["encoding"]["color"] = Dict(
+    "condition" => Dict(
+        "test" => "datum.is_pq",
+        "field" => "diff",
+        "type" => "quantitative",
+        "title" => color_title,
+        "scale" => Dict(
+            "range" => reverse(PowerPlots.color_schemes[:reds]),
+            "domain" => [0.06, 0.08],
+        ),
+    ),
+    "value" => "#d3d3d3",
+)
+
+# Enlarge legends (font, marker, colorbar) by 2x on visible color legends
+legend_size_updates = Dict(
+    "labelFontSize" => 20,
+    "titleFontSize" => 22,
+    "symbolSize" => 200,
+    "gradientLength" => 200,
+    "gradientThickness" => 32,
+)
+function apply_legend_size!(layer)
+    if haskey(layer, "encoding") && haskey(layer["encoding"], "color") && layer["encoding"]["color"] isa Dict
+        color_enc = layer["encoding"]["color"]
+        if get(color_enc, "legend", true) != false
+            legend_dict = get(color_enc, "legend", Dict{String,Any}())
+            if !(legend_dict isa Dict)
+                legend_dict = Dict{String,Any}()
+            end
+            for (k, v) in legend_size_updates
+                legend_dict[k] = v
+            end
+            color_enc["legend"] = legend_dict
+        end
+    end
+end
+
+# Apply legend sizing to top-level layers and nested branch layer
+for layer in plt.layer
+    apply_legend_size!(layer)
+    if haskey(layer, "layer") && layer["layer"] isa Vector
+        for sublayer in layer["layer"]
+            apply_legend_size!(sublayer)
+        end
+    end
+end
+
+
+for l in (2, 4, 5, 6)
     plt.layer[l]["encoding"]["color"]["legend"] = false
     pop!(plt.layer[l]["encoding"]["color"], "title")
 end
-
-## Force non-PQ buses to light gray, keep PQ buses on red scale
-#bus_colors = PowerPlots.color_schemes[:reds]
-#for layer in plt.layer
-#    if layer isa Dict &&
-#       haskey(layer, "encoding") &&
-#       layer["encoding"] isa Dict &&
-#       haskey(layer["encoding"], "color") &&
-#       layer["encoding"]["color"] isa Dict &&
-#       get(layer["encoding"]["color"], "title", "") == "Bus"
-#        layer["encoding"]["color"] = Dict(
-#            "condition" => Dict(
-#                "test" => "datum.is_pq",
-#                "field" => "diff",
-#                "type" => "quantitative",
-#                "title" => "Bus",
-#                "scale" => Dict("range" => bus_colors),
-#            ),
-#            "value" => "#d3d3d3",
-#        )
-#    end
-#end
-#
-## Color generators/loads/shunts light gray and hide their legends
-#for layer in plt.layer
-#    if layer isa Dict && haskey(layer, "encoding") && haskey(layer["encoding"], "color")
-#        color_enc = layer["encoding"]["color"]
-#        title = get(color_enc, "title", "")
-#        if title in ("Gen", "Load", "Shunt", "Storage")
-#            color_enc["legend"] = false
-#            color_enc["value"] = "#d3d3d3"
-#            pop!(color_enc, "field", nothing)
-#            pop!(color_enc, "type", nothing)
-#            pop!(color_enc, "scale", nothing)
-#        end
-#    end
-#end
 
 #display(plt)
 VegaLite.save("max-error-pq.pdf", plt)
