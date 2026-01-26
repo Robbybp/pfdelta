@@ -19,7 +19,7 @@ import pandas as pd
 import torch
 
 from core.datasets.pfdelta_variants import PFDeltaCANOS
-from vectorcanos import flatten_input
+from vectorcanos import flatten_input, get_flattened_input_names
 
 
 def load_dataset() -> PFDeltaCANOS:
@@ -34,6 +34,7 @@ def load_dataset() -> PFDeltaCANOS:
 
 
 def summarize_differences(points_path: Path, dataset: PFDeltaCANOS) -> pd.DataFrame:
+    name_list = get_flattened_input_names(dataset[0])
     data = json.loads(points_path.read_text())
     records = []
     for entry in data:
@@ -51,10 +52,13 @@ def summarize_differences(points_path: Path, dataset: PFDeltaCANOS) -> pd.DataFr
 
         diff = adv_vec - train_vec
         mask = ~np.isclose(adv_vec, train_vec, atol=1e-4)
-        differing_indices = np.nonzero(mask)[0]
-        num_diff = int(differing_indices.size)
+        differing_indices = [i for i in np.nonzero(mask)[0] if i < len(name_list)]
+        num_diff = int(len(differing_indices))
 
-        coord_strs = [f"{i}: {train_vec[i]:.6g} -> {adv_vec[i]:.6g}" for i in differing_indices]
+        coord_strs = [
+            f"{name_list[i]}: {train_vec[i]:.6g} -> {adv_vec[i]:.6g}"
+            for i in differing_indices
+        ]
         l1_norm = float(np.linalg.norm(diff, ord=1))
 
         records.append(
@@ -79,9 +83,20 @@ def main(argv: Iterable[str]) -> None:
     if df.empty:
         print("No records found.")
         return
-    #print(df)
     with pd.option_context("display.max_rows", None, "display.max_colwidth", None):
-        print(df.to_string(index=True))
+        print("All perturbations:")
+        print(df.to_string(index=False))
+
+        subset_order = [(4, 12), (0, 4), (8, 7), (9, 9), (2, 4)]
+        subset = pd.concat(
+            [
+                df[(df["training_point_index"] == ti) & (df["bus"] == b)]
+                for (ti, b) in subset_order
+            ],
+            axis=0,
+        )
+        print("\nSelected perturbations:")
+        print(subset.to_string(index=False))
 
     outfile = "perturbation-summary.csv"
     df.to_csv(outfile)
