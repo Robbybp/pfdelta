@@ -39,53 +39,6 @@ dataset = PFDeltaCANOS(
     task="1.1",
 )
 
-function get_input_names(pm::PowerModels.AbstractPowerModel)
-    buskeys = sort(collect(keys(pm.data["bus"])); by=k -> parse(Int, k))
-    branchkeys = sort(collect(keys(pm.data["branch"])); by=k -> parse(Int, k))
-
-    bus_names = String[]
-    pq_names = String[]
-    pv_names = String[]
-    slack_names = String[]
-    branch_names = String[]
-
-    for i in buskeys
-        idx = parse(Int, i)
-        bus_type = pm.data["bus"][i]["bus_type"]
-        if bus_type == 1
-            append!(bus_names, ["bus_pd[$idx]", "bus_qd[$idx]"])
-            append!(pq_names, ["pq_pd[$idx]", "pq_qd[$idx]"])
-        elseif bus_type == 2
-            append!(bus_names, ["bus_pg[$idx]", "bus_vm[$idx]"])
-            append!(pv_names, ["pv_pg[$idx]", "pv_vm[$idx]"])
-        elseif bus_type == 3
-            append!(bus_names, ["bus_va[$idx]", "bus_vm[$idx]"])
-            append!(slack_names, ["slack_va[$idx]", "slack_vm[$idx]"])
-        else
-            error("Unexpected bus type $(bus_type)")
-        end
-    end
-
-    for i in branchkeys
-        idx = parse(Int, i)
-        append!(
-            branch_names,
-            [
-                "br_r[$idx]",
-                "br_x[$idx]",
-                "g_fr[$idx]",
-                "b_fr[$idx]",
-                "g_to[$idx]",
-                "b_to[$idx]",
-                "tap[$idx]",
-                "shift[$idx]",
-            ],
-        )
-    end
-
-    return vcat(bus_names, pq_names, pv_names, slack_names, branch_names)
-end
-
 function print_x_with_bounds(x::AbstractVector, input_bounds::Vector{Tuple{Float64,Float64}}, input_names::Vector{String})
     @assert length(x) == length(input_bounds) == length(input_names)
     println(@sprintf("%4s %20s %14s %14s %14s %10s", "idx", "name", "value", "lb", "ub", "viol"))
