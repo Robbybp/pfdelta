@@ -17,9 +17,10 @@ import numpy as np
 
 import pandas as pd
 
+plt.rcParams["text.usetex"] = True
+plt.rcParams["font.family"] = "serif"
 
 CONVERGED_STATUSES: Tuple[str, ...] = ("FEASIBLE_POINT", "NEARLY_FEASIBLE_POINT")
-
 
 def summarize(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
@@ -59,13 +60,14 @@ def main(argv: Iterable[str]) -> None:
 
     vmin, vmax = conv_obj.min(), conv_obj.max()
     if vmax <= 7 or vmin >= 3:
-        plt.figure(figsize=(8, 4))
+        fig = plt.figure(figsize=(8, 4))
         plt.hist(conv_obj, bins=30, color="#4C72B0", edgecolor="white")
         plt.xlabel("Objective")
         plt.ylabel("Count")
         plt.title("Objective Histogram (Converged)")
-        plt.tight_layout()
-        plt.savefig(outfile, dpi=200, transparent=True)
+        fig.supxlabel("Objective")
+        fig.tight_layout()
+        fig.savefig(outfile, dpi=200, transparent=True)
         print(f"Saved histogram to {outfile}")
         return
 
@@ -94,8 +96,9 @@ def main(argv: Iterable[str]) -> None:
 
     fig.suptitle("Objective Histogram (Converged)")
     ax1.set_ylabel("Count")
-    ax1.set_xlabel("Objective")
-    ax2.set_xlabel("Objective")
+    #ax1.set_xlabel("Objective")
+    #ax2.set_xlabel("Objective")
+    fig.supxlabel("$\\left\\| x - x_0 \\right\\|_1$")
     fig.tight_layout()
     fig.savefig(outfile, dpi=200, transparent=True)
     print(f"Saved histogram with broken x-axis to {outfile}")
