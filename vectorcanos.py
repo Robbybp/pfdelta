@@ -18,6 +18,16 @@ def flatten_input(data):
     return torch.cat(parts, dim=0)
 
 
+def overwrite_inputs(template, x_flat, input_sizes, node_keys, edge_keys, input_shapes):
+    x_flat = x_flat.to(torch.float32)
+    chunks = torch.split(x_flat, input_sizes)
+    data = template.clone()
+    keys = [(k, "x") for k in node_keys] + [(k, "edge_attr") for k in edge_keys]
+    for chunk, (k, field), shape in zip(chunks, keys, input_shapes):
+        data[k][field] = chunk.view(*shape)
+    return data
+
+
 def flatten_input_labels(data) -> torch.Tensor:
     """
     Flatten ground-truth labels to match the ordering of vectorized outputs.
