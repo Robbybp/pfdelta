@@ -62,8 +62,8 @@ def summarize_differences(points_path: Path, dataset: PFDeltaCANOS) -> pd.DataFr
                 "training_point_index": idx,
                 "bus": bus,
                 "num_diff_coords": num_diff,
-                #"diff_coords": "; ".join(coord_strs),
                 "l1_norm": l1_norm,
+                "diff_coords": "; ".join(coord_strs),
             }
         )
 
