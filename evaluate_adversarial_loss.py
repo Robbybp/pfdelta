@@ -165,6 +165,9 @@ def main(argv: Iterable[str]) -> None:
     summarize("CANOS MSE", mse_vals)
     summarize("Power balance", pb_vals)
 
+    minpb = min(pb_vals)
+    print(f"Minimum PB loss: {minpb}")
+
 
 if __name__ == "__main__":
     import sys

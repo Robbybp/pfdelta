@@ -12,6 +12,10 @@ import numpy as np
 import pandas as pd
 
 
+plt.rcParams["text.usetex"] = True
+plt.rcParams["font.family"] = "serif"
+
+
 def build_bus_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Pivot to get |objective| for min/max sense per bus."""
     df = df.copy()
@@ -34,7 +38,7 @@ def build_bus_frame(df: pd.DataFrame) -> pd.DataFrame:
     return pivot
 
 
-def plot_group(ax, data: pd.DataFrame, title: str, ylim=None):
+def plot_group(ax, data: pd.DataFrame, title: str, ylim=None, ylabel=None):
     """Render grouped bars for a subset of buses."""
     if data.empty:
         ax.set_visible(False)
@@ -46,20 +50,23 @@ def plot_group(ax, data: pd.DataFrame, title: str, ylim=None):
 
     x = np.arange(len(buses))
     width = 0.35
-    ax.bar(x - width / 2, min_vals, width, label="|min objective|", color="#5DA5DA")
-    ax.bar(x + width / 2, max_vals, width, label="|max objective|", color="#F15854")
+    ax.bar(x - width / 2, min_vals, width, label=r"$\left|\min\left(y_{\textrm{NN},i}-y_{\textrm{PF},i}\right)\right|$", color="#5DA5DA")
+    ax.bar(x + width / 2, max_vals, width, label=r"$\left|\max\left(y_{\textrm{NN},i}-y_{\textrm{PF},i}\right)\right|$", color="#F15854")
 
     ax.set_xticks(x)
     ax.set_xticklabels(buses)
-    ax.set_xlabel("Bus")
-    ax.set_ylabel("|objective|")
-    ax.set_title(title)
+    ax.set_xlabel("Bus", fontsize=14)
+    if ylabel is None:
+        ax.set_ylabel("Error", fontsize=14)
+    else:
+        ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_title(title, fontsize=14)
     ax.legend()
 
 
 def main():
     infile = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("max-error-sweep.csv")
-    outfile = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("max-min-objectives.png")
+    outfile = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("max-min-objectives.pdf")
 
     df = pd.read_csv(infile)
     pivot = build_bus_frame(df)
@@ -67,12 +74,12 @@ def main():
     pq = pivot[pivot["bustype"] == 1].sort_values("bus")
     pv_slack = pivot[pivot["bustype"].isin([2, 3])].sort_values("bus")
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharey=False)
-    plot_group(ax1, pq, "PQ Buses")#, ylim=(0, 0.1))
-    plot_group(ax2, pv_slack, "PV + Slack Buses")# ylim=(0.0, 4.0))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(5, 6), sharey=False)
+    plot_group(ax1, pq, "PQ Buses", ylabel="$v$ error (per-unit)")
+    plot_group(ax2, pv_slack, "PV + Reference Buses", ylabel="$q$ error (per-unit)")
 
     fig.tight_layout()
-    fig.savefig(outfile, dpi=200)
+    fig.savefig(outfile, dpi=200, transparent=True)
     print(f"Saved bar charts to {outfile}")
 
 

@@ -6,7 +6,7 @@ using PowerPlots
 using PGLib
 using VegaLite
 
-function plot_bus_types(bustypes, domain)
+function plot_bus_types(bustypes, domain; title = "Bus")
     # Load objective differences
     df = CSV.read("max-error-sweep.csv", DataFrame)
     pq_df = filter(row -> row.bustype in bustypes && !ismissing(row.objective), df)
@@ -31,9 +31,9 @@ function plot_bus_types(bustypes, domain)
 
     # This would presumably remove gen/load/shunt nodes, but it also breaks my
     # code below which hard-codes layer indices.
-    #case["gen"] = Dict{String,Any}()
-    #case["load"] = Dict{String,Any}()
-    #case["shunt"] = Dict{String,Any}()
+    case["gen"] = Dict{String,Any}()
+    case["load"] = Dict{String,Any}()
+    case["shunt"] = Dict{String,Any}()
 
     # Plot with shades of red proportional to the difference
     plt = powerplot(
@@ -51,8 +51,9 @@ function plot_bus_types(bustypes, domain)
     )
 
     # Force non-PQ buses to gray while keeping PQ buses on reversed red scale
-    bus_layer = plt.layer[3]
-    color_title = get(bus_layer["encoding"]["color"], "title", "Bus")
+    bus_layer = plt.layer[2]
+    #color_title = get(bus_layer["encoding"]["color"], "title", title)
+    color_title = title
     bus_layer["encoding"]["color"] = Dict(
         "condition" => Dict(
             "test" => "datum.selected",
@@ -62,54 +63,65 @@ function plot_bus_types(bustypes, domain)
             "scale" => Dict(
                 "range" => reverse(PowerPlots.color_schemes[:reds]),
                 "domain" => domain,
+                "fontSize" => 20,
+            ),
+            "legend" => Dict(
+                "labelFontSize" => 30,      # Legend label font size
+                "titleFontSize" => 40,       # Legend title font size
+                "gradientLength" => 400,     # Length of the gradient bar
+                "gradientThickness" => 20,   # Thickness/width of the gradient bar
             ),
         ),
         "value" => "#d3d3d3",
     )
+    #bus_layer["encoding"]["color"]["legend"] = Dict("title" => title)
+    plt.layer[1]["layer"][1]["encoding"]["color"]["legend"] = false
+    # Can't figure out how to set node sizees...
+    bus_layer["encoding"]["size"] = Dict("value" => 1000)
 
     # Enlarge legends (font, marker, colorbar) by 2x on visible color legends
-    legend_size_updates = Dict(
-        "labelFontSize" => 20,
-        "titleFontSize" => 22,
-        "symbolSize" => 200,
-        "gradientLength" => 200,
-        "gradientThickness" => 32,
-    )
-    function apply_legend_size!(layer)
-        if haskey(layer, "encoding") && haskey(layer["encoding"], "color") && layer["encoding"]["color"] isa Dict
-            color_enc = layer["encoding"]["color"]
-            if get(color_enc, "legend", true) != false
-                legend_dict = get(color_enc, "legend", Dict{String,Any}())
-                if !(legend_dict isa Dict)
-                    legend_dict = Dict{String,Any}()
-                end
-                for (k, v) in legend_size_updates
-                    legend_dict[k] = v
-                end
-                color_enc["legend"] = legend_dict
-            end
-        end
-    end
+    #legend_size_updates = Dict(
+    #    "labelFontSize" => 20,
+    #    "titleFontSize" => 22,
+    #    "symbolSize" => 200,
+    #    "gradientLength" => 200,
+    #    "gradientThickness" => 32,
+    #)
+    #function apply_legend_size!(layer)
+    #    if haskey(layer, "encoding") && haskey(layer["encoding"], "color") && layer["encoding"]["color"] isa Dict
+    #        color_enc = layer["encoding"]["color"]
+    #        if get(color_enc, "legend", true) != false
+    #            legend_dict = get(color_enc, "legend", Dict{String,Any}())
+    #            if !(legend_dict isa Dict)
+    #                legend_dict = Dict{String,Any}()
+    #            end
+    #            for (k, v) in legend_size_updates
+    #                legend_dict[k] = v
+    #            end
+    #            color_enc["legend"] = legend_dict
+    #        end
+    #    end
+    #end
 
     # Apply legend sizing to top-level layers and nested branch layer
-    for layer in plt.layer
-        apply_legend_size!(layer)
-        if haskey(layer, "layer") && layer["layer"] isa Vector
-            for sublayer in layer["layer"]
-                apply_legend_size!(sublayer)
-            end
-        end
-    end
+    #for layer in plt.layer
+    #    apply_legend_size!(layer)
+    #    if haskey(layer, "layer") && layer["layer"] isa Vector
+    #        for sublayer in layer["layer"]
+    #            apply_legend_size!(sublayer)
+    #        end
+    #    end
+    #end
 
-    for l in (2, 4, 5, 6)
-        plt.layer[l]["encoding"]["color"]["legend"] = false
-        pop!(plt.layer[l]["encoding"]["color"], "title")
-    end
+    #for l in (2, 4, 5, 6)
+    #    plt.layer[l]["encoding"]["color"]["legend"] = false
+    #    pop!(plt.layer[l]["encoding"]["color"], "title")
+    #end
     return plt
 end
 
-plt = plot_bus_types([1], [0.06, 0.08])
+plt = plot_bus_types([1], [0.06, 0.08], title="Bus V")
 VegaLite.save("max-error-pq.pdf", plt)
 
-plt = plot_bus_types([2,3], [0.0, 4.0])
+plt = plot_bus_types([2,3], [0.0, 4.0], title="Bus Q")
 VegaLite.save("max-error-pv-slack.pdf", plt)

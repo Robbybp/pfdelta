@@ -94,6 +94,12 @@ def summarize(dist_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
         .sort_values("training_point_index")
     )
+    # HACK: Bus input values are duplicated in the input vector,
+    # so we divide the support by 2 to get the actual number of
+    # different "unique physical quantities"
+    grouped["avg_support"] /= 2.0
+    # For consistency, we divide this by two as well...
+    grouped["avg_distance_l1"] /= 2.0
     grouped["avg_support"] = grouped["avg_support"].round()
     return grouped
 
@@ -111,6 +117,11 @@ def main(argv: Iterable[str]) -> None:
 
     print(summary.to_string(index=False, float_format=lambda x: f"{x:.6f}"))
 
+    # HACK: We divide distance by two because all bus inputs are duplicated.
+    # We have to do this after computing the summary because we divide by
+    # two after grouping that function as well (at the same time that we divide
+    # the average support by two)..........
+    dist_df["distance_l1"] /= 2.0
     # Histogram over all converged L1 distances
     conv_obj = dist_df["distance_l1"].dropna()
     if conv_obj.empty:
@@ -130,19 +141,19 @@ def main(argv: Iterable[str]) -> None:
     #    return
 
     fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(5, 4), sharey=True, gridspec_kw={"width_ratios": [3, 2]}
+        1, 2, figsize=(5, 3), sharey=True, gridspec_kw={"width_ratios": [3, 1]}
     )
     bins = np.linspace(vmin, vmax, 30)
     ax1.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
     ax2.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
 
-    ax1.set_xlim(0.0, 0.9)
-    ax2.set_xlim(1.75, 2.25)
+    ax1.set_xlim(0.0, 0.5)
+    ax2.set_xlim(0.9, 1.1)
 
     ax1.spines["right"].set_visible(False)
     ax2.spines["left"].set_visible(False)
     ax1.yaxis.tick_left()
-    ax2.yaxis.tick_right()
+    ax2.tick_params(left=False, right=False)
 
     d = 0.015
     kwargs = dict(transform=ax1.transAxes, color="k", clip_on=False, linewidth=1.0)
@@ -152,11 +163,11 @@ def main(argv: Iterable[str]) -> None:
     ax2.plot((-d, +d), (-d, +d), **kwargs)
     ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)
 
-    fig.suptitle("Perturbations required to satisfy adversarial constraints", x=0.53)
-    ax1.set_ylabel("Count")
+    #fig.suptitle("Perturbations required to satisfy adversarial constraints", x=0.53, fontsize=14)
+    ax1.set_ylabel("Count", fontsize=14)
     #ax1.set_xlabel("Objective")
     #ax2.set_xlabel("Objective")
-    fig.supxlabel("$\\left\\| x - x_0 \\right\\|_1$", y=0.06, x = 0.55)
+    fig.supxlabel("$\\left\\| x - x_0 \\right\\|_1$", y=0.06, x = 0.55, fontsize=14)
     fig.tight_layout()
     fig.savefig(outfile, dpi=200, transparent=True)
     print(f"Saved histogram with broken x-axis to {outfile}")

@@ -59,7 +59,7 @@ def summarize_differences(points_path: Path, dataset: PFDeltaCANOS) -> pd.DataFr
             f"{name_list[i]}: {train_vec[i]:.6g} -> {adv_vec[i]:.6g}"
             for i in differing_indices
         ]
-        l1_norm = float(np.linalg.norm(diff, ord=1))
+        l1_norm = float(np.linalg.norm(diff[differing_indices], ord=1))
 
         records.append(
             {
