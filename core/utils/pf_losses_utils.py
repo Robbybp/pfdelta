@@ -258,7 +258,10 @@ class PowerBalanceLoss:
                   per-branch scalar attributes used by the PBL calculation
         """
         power_balance_model_preds = {}
-        if model_name == "CANOS":
+        supported_models = ("CANOS", "PFNet", "GNS")
+        if model_name not in supported_models:
+            raise ValueError(f"model must be one of {supported_models}")
+        elif model_name == "CANOS":
             device = data["bus"].x.device
             num_buses = data["bus"].num_nodes
             bus_output = output["bus"]
