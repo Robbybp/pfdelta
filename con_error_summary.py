@@ -5,7 +5,7 @@ Summarize adversarially-constrained error runs by training point.
 For each training_point_index, report:
   - problems converged (primal_status in {FEASIBLE_POINT, NEARLY_FEASIBLE_POINT})
   - average 1-norm distance between adversarial and training point (computed directly)
-  - average support (number of coords differing above 1e-4)
+  - average support / zero-norm (number of coords differing above 1e-4)
   - average NN output
   - average PF output
 """
@@ -39,6 +39,10 @@ def load_dataset():
 def flatten_training_point(sample):
     from vectorcanos import flatten_input
     return flatten_input(sample).detach().cpu().numpy()
+
+
+def zero_norm_histogram_path(outfile: Path) -> Path:
+    return outfile.with_name(f"{outfile.stem}-zero-norm{outfile.suffix}")
 
 def compute_distances(csv_path: Path, points_path: Path) -> pd.DataFrame:
     pts = json.loads(points_path.read_text())
@@ -104,10 +108,65 @@ def summarize(dist_df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
+def plot_broken_l1_histogram(values: pd.Series, outfile: Path) -> None:
+    vmin, vmax = values.min(), values.max()
+
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(5, 3), sharey=True, gridspec_kw={"width_ratios": [3, 1]}
+    )
+    bins = np.linspace(vmin, vmax, 30)
+    ax1.hist(values, bins=bins, color="#4C72B0", edgecolor="white")
+    ax2.hist(values, bins=bins, color="#4C72B0", edgecolor="white")
+
+    ax1.set_xlim(0.0, 0.5)
+    ax2.set_xlim(0.9, 1.1)
+
+    ax1.spines["right"].set_visible(False)
+    ax2.spines["left"].set_visible(False)
+    ax1.yaxis.tick_left()
+    yticks = list(map(int, ax1.get_yticks()))
+    lo, hi = yticks[0], yticks[-1]
+    yticks = [i for i in range(lo, hi + 1) if i%2 == 0]
+    ax1.set_yticks(yticks)
+    ax2.tick_params(left=False, right=False)
+
+    d = 0.015
+    kwargs = dict(transform=ax1.transAxes, color="k", clip_on=False, linewidth=1.0)
+    ax1.plot((1 - d, 1 + d), (-d, +d), **kwargs)
+    ax1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
+    kwargs.update(transform=ax2.transAxes)
+    ax2.plot((-d, +d), (-d, +d), **kwargs)
+    ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)
+
+    ax1.set_ylabel("Count", fontsize=14)
+    fig.supxlabel("$\\left\\| x - x_0 \\right\\|_1$", y=0.06, x=0.55, fontsize=14)
+    fig.tight_layout()
+    fig.savefig(outfile, dpi=200, transparent=True)
+    plt.close(fig)
+    print(f"Saved histogram with broken x-axis to {outfile}")
+
+
+def plot_zero_norm_histogram(values: pd.Series, outfile: Path) -> None:
+    fig, ax = plt.subplots(figsize=(3, 3))
+    bins = np.arange(values.min() - 0.5, values.max() + 1.5, 1.0)
+    ax.hist(values, bins=bins, color="#4C72B0", edgecolor="white", rwidth=0.9)
+    ax.set_xlabel(r"$\left\| x - x_0 \right\|_0$", fontsize=14)
+    ax.set_ylabel("Count", fontsize=14)
+    low = int(values.min())
+    high = int(values.max())
+    ticks = list(range(low, high + 1))
+    ax.set_xticks(ticks)
+    fig.tight_layout()
+    fig.savefig(outfile, dpi=200, transparent=True)
+    plt.close(fig)
+    print(f"Saved zero-norm histogram to {outfile}")
+
+
 def main(argv: Iterable[str]) -> None:
     infile = Path(argv[1]) if len(argv) > 1 else Path("con-error-sweep.csv")
     points_path = Path(argv[2]) if len(argv) > 2 else Path("con-error-points.json")
     outfile = Path(argv[3]) if len(argv) > 3 else Path("distance-histogram.pdf")
+    zero_norm_outfile = zero_norm_histogram_path(outfile)
 
     dist_df = compute_distances(infile, points_path)
     summary = summarize(dist_df)
@@ -122,55 +181,21 @@ def main(argv: Iterable[str]) -> None:
     # two after grouping that function as well (at the same time that we divide
     # the average support by two)..........
     dist_df["distance_l1"] /= 2.0
+    dist_df["support"] /= 2.0
     # Histogram over all converged L1 distances
     conv_obj = dist_df["distance_l1"].dropna()
     if conv_obj.empty:
         print("No distance values to plot.")
         return
 
-    vmin, vmax = conv_obj.min(), conv_obj.max()
-    #if vmax <= 7 or vmin >= 3:
-    #    fig = plt.figure(figsize=(8, 4))
-    #    plt.hist(conv_obj, bins=30, color="#4C72B0", edgecolor="white")
-    #    plt.xlabel("Objective")
-    #    plt.ylabel("Count")
-    #    #fig.supxlabel("Objective", y=0.02)
-    #    fig.tight_layout()
-    #    fig.savefig(outfile, dpi=200, transparent=True)
-    #    print(f"Saved histogram to {outfile}")
-    #    return
+    plot_broken_l1_histogram(conv_obj, outfile)
 
-    fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(5, 3), sharey=True, gridspec_kw={"width_ratios": [3, 1]}
-    )
-    bins = np.linspace(vmin, vmax, 30)
-    ax1.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
-    ax2.hist(conv_obj, bins=bins, color="#4C72B0", edgecolor="white")
+    zero_norm = dist_df["support"].dropna().round().astype(int)
+    if zero_norm.empty:
+        print("No zero-norm values to plot.")
+        return
 
-    ax1.set_xlim(0.0, 0.5)
-    ax2.set_xlim(0.9, 1.1)
-
-    ax1.spines["right"].set_visible(False)
-    ax2.spines["left"].set_visible(False)
-    ax1.yaxis.tick_left()
-    ax2.tick_params(left=False, right=False)
-
-    d = 0.015
-    kwargs = dict(transform=ax1.transAxes, color="k", clip_on=False, linewidth=1.0)
-    ax1.plot((1 - d, 1 + d), (-d, +d), **kwargs)
-    ax1.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
-    kwargs.update(transform=ax2.transAxes)
-    ax2.plot((-d, +d), (-d, +d), **kwargs)
-    ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)
-
-    #fig.suptitle("Perturbations required to satisfy adversarial constraints", x=0.53, fontsize=14)
-    ax1.set_ylabel("Count", fontsize=14)
-    #ax1.set_xlabel("Objective")
-    #ax2.set_xlabel("Objective")
-    fig.supxlabel("$\\left\\| x - x_0 \\right\\|_1$", y=0.06, x = 0.55, fontsize=14)
-    fig.tight_layout()
-    fig.savefig(outfile, dpi=200, transparent=True)
-    print(f"Saved histogram with broken x-axis to {outfile}")
+    plot_zero_norm_histogram(zero_norm, zero_norm_outfile)
 
 
 if __name__ == "__main__":
