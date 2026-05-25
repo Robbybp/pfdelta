@@ -25,7 +25,7 @@ import PGLib
 import MathProgIncidence as MPIN
 import PowerPlots
 
-include("powerflow.jl")
+include("moai-canos-model.jl")
 
 # Python imports
 PythonCall.pyimport("sys").path.append(pwd())
