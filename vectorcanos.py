@@ -90,6 +90,7 @@ class VectorCanos(nn.Module):
         chunks = torch.split(x_flat, self.input_sizes)
 
         data = self.template.clone()
+        data.to(x_flat.device)
         node_keys = [(k, "x") for k in self.node_input_keys]
         edge_keys = [(k, "edge_attr") for k in self.edge_input_keys]
         keys = node_keys + edge_keys
@@ -208,6 +209,7 @@ def get_flattened_input_names(template) -> List[str]:
 
 
 if __name__ == "__main__":
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(48)
     dataset = PFDeltaCANOS(
         add_bus_type=True,
@@ -228,7 +230,10 @@ if __name__ == "__main__":
         k_steps=k_steps,
     )
     wrapper = VectorCanos(canos, sample)
+    sample.to(device)
     x_flat = wrapper.flatten_input(sample)
+    wrapper.to(device)
+    #x_flat = x_flat.to(device)
     y_flat = wrapper(x_flat)
     print(f"input_dim={wrapper.input_dim}  output_dim={wrapper.output_dim}")
     torch.save(wrapper, "vector-canos.pt")
