@@ -27,6 +27,17 @@ The following scripts may be used to produce the results in the paper:
   as all the results are collected on the CANOS-PF model.
 - `validate_canos.py` &mdash; Evaluates loss of the trained CANOS-PF model
   on train and test data
+- `vectorcanos.py` &mdash; Contains the `VectorCanos` class that wraps the structured
+  CANOS-PF NN. When run as a script, passes the first training point through the vectorized
+  wrapper and evaluates loss. (Doesn't seem to compare loss to anything else though...)
+  This script also writes the `vector-canos.pt` file.
+  - This script only operates on an untrained CANOS-PF instance, so it isn't that important
+    as a script
+- `test_canos_trained.py` &mdash; Loads weights from a `model.pt` file in a hard-coded
+  "run directory" and saves to a `vectorcanos-trained.pt` file
+- `moai-canos.jl` &mdash; A script for solving a single instance of the constrained-error
+  problem. This script is intended to provide a MWE of the research objective: An adversarial
+  point where the NN says "feasible" but ACPF reveals that the point is infeasible.
 
 The following files contain helper functions:
 - `moai-canos-model.jl` &mdash; Functions for performing JuMP/PowerModels solves with
