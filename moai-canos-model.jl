@@ -444,7 +444,7 @@ function solve_maximum_error(i::Int, sense::String)
 
     # CANOS constraints
     # We add these extra variables as a hacky workaround to make all inputs variables.
-    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
+    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = 1.0)
     @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
     device = cuda_available ? "cuda" : "cpu"
     println("device = $device")
