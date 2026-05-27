@@ -191,20 +191,24 @@ class PFDeltaDataset(InMemoryDataset):
             "near infeasible": {"n": 200, "n-1": 200, "n-2": 200},
         }
 
+        all_other_cases = self.all_case_names.copy()
+        if task == 3.1:
+            all_other_cases.remove(self.case_name)
+
         self.task_split_config = {
             3.1: {
                 "train": [self.case_name],
-                "val": self.all_case_names,
-                "test": self.all_case_names,
+                "val": [self.case_name],
+                "test": all_other_cases,
             },
             3.2: {
                 "train": ["case14", "case30", "case57"],
-                "val": ["case118", "case500", "case2000"],
+                "val": ["case14", "case30", "case57"],
                 "test": ["case118", "case500", "case2000"],
             },
             3.3: {
                 "train": ["case118", "case500", "case2000"],
-                "val": ["case14", "case30", "case57"],
+                "val": ["case118", "case500", "case2000"],
                 "test": ["case14", "case30", "case57"],
             },
         }
@@ -691,11 +695,18 @@ class PFDeltaDataset(InMemoryDataset):
         - File discovery is based on fixed directory naming conventions 
         within each case folder.
         """
-        dataset_size = (
-            self.n_samples
-            if self.n_samples > 0
-            else self.task_config[self.task][self.feasibility_type][self.perturbation]
+        total_dataset_size = self.task_config[self.task][self.feasibility_type][
+            self.perturbation
+        ]
+        dataset_size = self.n_samples if self.n_samples > 0 else total_dataset_size
+
+        assert (
+            dataset_size
+            <= self.task_config[self.task][self.feasibility_type][self.perturbation]
+        ), (
+            f"Requested n_samples {self.n_samples} exceeds available {total_dataset_size} samples, "
         )
+        
         data_list = []
 
         if self.feasibility_type == "feasible":
@@ -728,9 +739,9 @@ class PFDeltaDataset(InMemoryDataset):
 
         return data_list
 
-    def get_shuffle_file_path(self, grid_type: str, case_root: str) -> str:
+    def get_shuffle_file_path(self, perturbation_type: str, case_root: str) -> str:
         """
-        Return the path to the shuffle mapping JSON file for a given grid type.
+        Return the path to the shuffle mapping JSON file for a given perturbation type.
 
         This utility determines which shuffle mapping to use when building 
         processed train/validation/test splits. For large-scale systems such 
@@ -739,8 +750,8 @@ class PFDeltaDataset(InMemoryDataset):
 
         Parameters
         ----------
-        grid_type : str
-            Grid size category (e.g., 'small', 'medium', 'large') 
+        perturbation_type : str
+            Perturbation type category (e.g., 'n', 'n-1', 'n-2') 
             used to locate the correct shuffle file.
         case_root : str
             Path to the case directory, used to detect special naming rules.
@@ -752,11 +763,11 @@ class PFDeltaDataset(InMemoryDataset):
         """
         if "case2000" in case_root:
             return os.path.join(
-                self.root, "shuffle_files", grid_type, "raw_shuffle_2000.json"
+                self.root, "shuffle_files", perturbation_type, "raw_shuffle_2000.json"
             )
         else:
             return os.path.join(
-                self.root, "shuffle_files", grid_type, "raw_shuffle.json"
+                self.root, "shuffle_files", perturbation_type, "raw_shuffle.json"
             )
 
     def shuffle_split_and_save_data(self, case_root: str, split: str) -> Dict[str, list]:
@@ -807,6 +818,7 @@ class PFDeltaDataset(InMemoryDataset):
                 for feas_type, feas_num in feas_values.items():
                     feas_values[feas_type] = feas_num // 2
 
+        all_data = []
         for feasibility, train_cfg_dict in task_config.items():
             test_cfg = self.test_config[feasibility]
 
@@ -914,6 +926,7 @@ class PFDeltaDataset(InMemoryDataset):
                         is_cpf_sample=is_cpf_sample
                     )
                     data_list.append(data)
+                all_data.extend(data_list)
 
                 # Collate and save
                 data, slices = self.collate(data_list)
@@ -927,7 +940,7 @@ class PFDeltaDataset(InMemoryDataset):
                     (data, slices), os.path.join(processed_path, f"{split}.pt")
                 )
 
-        return data_list
+        return all_data
 
     def process(self):
         """
@@ -1068,8 +1081,8 @@ class PFDeltaDataset(InMemoryDataset):
                     f"{split_str}.pt",
                 )
             print(f"Loading {split} dataset from {processed_path}")
-            self.data, self.slices = torch.load(processed_path)
+            self.data, self.slices = torch.load(processed_path, weights_only=False)
         else:
             processed_path = os.path.join(self.processed_dir, f"{split}.pt")
             print(f"Loading {split} dataset from {processed_path}")
-            self.data, self.slices = torch.load(processed_path)
+            self.data, self.slices = torch.load(processed_path, weights_only=False)

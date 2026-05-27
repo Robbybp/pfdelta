@@ -178,8 +178,8 @@ class PowerBalanceLoss:
             * V_pred[src]
             / tau
             * (
-                -Y_real * torch.cos(delta_theta2 - theta_shift)
-                - Y_imag * torch.sin(delta_theta2 - theta_shift)
+                -Y_real * torch.cos(delta_theta2 + theta_shift)
+                - Y_imag * torch.sin(delta_theta2 + theta_shift)
             )
             + Y_real * V_pred[dst] ** 2
         )
@@ -201,8 +201,8 @@ class PowerBalanceLoss:
             * V_pred[src]
             / tau
             * (
-                -Y_real * torch.sin(delta_theta2 - theta_shift)
-                + Y_imag * torch.cos(delta_theta2 - theta_shift)
+                -Y_real * torch.sin(delta_theta2 + theta_shift)
+                + Y_imag * torch.cos(delta_theta2 + theta_shift)
             )
             - (Y_imag + suscept / 2) * V_pred[dst] ** 2
         )
@@ -612,8 +612,8 @@ class constraint_violations_loss_pf:
         # Shunt admittances
         bus_shunts = data["bus"].shunt.to(device)
         shunt_flows = (torch.abs(vm) ** 2) * (
-            bus_shunts[:, 1] + 1j * bus_shunts[:, 0]
-        )  # (b_shunt + j*g_shunt)
+            bus_shunts[:, 0] - 1j * bus_shunts[:, 1]
+        )  # (g_shunt - j*b_shunt)
 
         power_balance = gen_flows - demand_flows - shunt_flows - sum_branch_flows
         real_power_mismatch = torch.abs(torch.real(power_balance))
@@ -625,14 +625,14 @@ class constraint_violations_loss_pf:
 
         # branch flows: ground truth mismatch, real
         p_flows_true = data["bus", "branch", "bus"].edge_label[
-            :, -2
+            :, 0
         ]  # this is from bus flow
         p_flows_mismatch = torch.real(flows_fwd) - p_flows_true
         violation_degree_real_flow_mismatch = torch.abs(p_flows_mismatch).mean()
 
         # branch flows: ground truth mismatch, reactive
         q_flows_true = data["bus", "branch", "bus"].edge_label[
-            :, -1
+            :, 1
         ]  # this is from bus flow
         q_flows_mismatch = torch.imag(flows_fwd) - q_flows_true
         violation_degree_imag_flow_mismatch = torch.abs(q_flows_mismatch).mean()
