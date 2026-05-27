@@ -446,6 +446,7 @@ function solve_maximum_error(i::Int, sense::String)
     # We add these extra variables as a hacky workaround to make all inputs variables.
     @variable(pm.model, moai_inputs[i = 1:n_inputs], start = 1.0)
     @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
+    cuda_available = PythonCall.pyconvert(Bool, torch.cuda.is_available())
     device = cuda_available ? "cuda" : "cpu"
     println("device = $device")
     y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true, device)
@@ -620,6 +621,7 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     # We add these extra variables as a hacky workaround to make all inputs variables.
     @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
     @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
+    cuda_available = PythonCall.pyconvert(Bool, torch.cuda.is_available())
     device = cuda_available ? "cuda" : "cpu"
     println("device = $device")
     y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true, device)
