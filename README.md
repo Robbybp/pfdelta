@@ -40,10 +40,10 @@ The following scripts may be used to produce the results in the paper:
   point where the NN says "feasible" but ACPF reveals that the point is infeasible.
 - `max-error-sweep.jl` &mdash; Solves the maximum-error problem for every Case-14 bus
   and both objective senses. This writes `max-error-sweep.csv` and
-  `max-error-points.json`.
+  `max-error-points.json` under `results/<YYYYMMDD>-<branch>/`.
 - `con-error-sweep.jl` &mdash; Solves the constrained-error problem for selected
   training points and PQ buses. This writes `con-error-sweep.csv` and
-  `con-error-points.json`.
+  `con-error-points.json` under `results/<YYYYMMDD>-<branch>/`.
 - `evaluate-adversarial-pf.jl` &mdash; Re-solves ACPF at the adversarial points
   written by the sweep scripts and writes PF labels to `con-error-labels.json`
   and `max-error-labels.json`.
@@ -67,3 +67,5 @@ The following files contain helper functions:
 - `moai-canos-model.jl` &mdash; Functions for performing JuMP/PowerModels solves with
   input data in the form of a (flattened) PFDelta data point. This file also contains
   the reusable routines called by the sweep scripts.
+- `results.jl` &mdash; Defines `results_path`, which creates the dated branch-specific
+  results directory and returns paths under it.
