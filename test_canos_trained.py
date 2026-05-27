@@ -23,7 +23,10 @@ canos = CANOS_PF(dataset, hidden_dim, include_sent_messages, k_steps)
 nparam = sum(p.numel() for p in canos.parameters() if p.requires_grad)
 print(f"N. parameters: {nparam}")
 
-modelpath = os.path.join("runs", "canos_task_1_1", "canos_k_steps15_hd128_lr5e-4_task_1_1_260116_133938", "model.pt")
+# Model trained with original version of PFDelta
+#modelpath = os.path.join("runs", "canos_task_1_1", "canos_k_steps15_hd128_lr5e-4_task_1_1_260116_133938", "model.pt")
+# Model trained with CANOS loss bug fixed
+modelpath = os.path.join("runs", "canos_task_1_1", "canos_k_steps15_hd128_lr5e-4_task_1_1_260527_121647", "model.pt")
 canos_state = torch.load(modelpath)
 canos.load_state_dict(canos_state)
 canos.eval()
