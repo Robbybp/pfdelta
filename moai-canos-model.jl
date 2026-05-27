@@ -486,7 +486,7 @@ function solve_maximum_error(i::Int, sense::String)
     nvar = length(JuMP.all_variables(pm.model))
     ncon = 0
     for con in JuMP.all_constraints(pm.model; include_variable_in_set_constraints = true)
-        if shape == JuMP.ScalarShape()
+        if con.shape == JuMP.ScalarShape()
             ncon += 1
         else
             vno = JuMP.MOI.get(pm.model, JuMP.MOI.ConstraintSet(), con)
@@ -673,7 +673,7 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     nvar = length(JuMP.all_variables(pm.model))
     ncon = 0
     for con in JuMP.all_constraints(pm.model; include_variable_in_set_constraints = true)
-        if shape == JuMP.ScalarShape()
+        if con.shape == JuMP.ScalarShape()
             ncon += 1
         else
             vno = JuMP.MOI.get(pm.model, JuMP.MOI.ConstraintSet(), con)
