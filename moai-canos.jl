@@ -10,6 +10,7 @@ import PowerModels
 import PGLib
 import MathProgIncidence as MPIN
 import PowerPlots
+import HSL_jll
 
 # Load file with model-building functions and utilities for collecting
 # inputs and outputs
@@ -103,7 +104,10 @@ JuMP.@objective(pm.model, Min, sum(input_slack_pos .+ input_slack_neg))
 # We add these extra variables as a hacky workaround to make all inputs variables.
 @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
 @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
-y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
+cuda_available = PythonCall.pyconvert(Bool, torch.cuda.is_available())
+device = cuda_available ? "cuda" : "cpu"
+println("device = $device")
+y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true, device)
 pm_to_canos = Dict(zip(outputs, y))
 
 # Constraints imposing a voltage mismatch on some bus
