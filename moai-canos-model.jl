@@ -7,6 +7,7 @@ using PGLib
 import MathProgIncidence as MPIN
 import MathOptAI as MOAI
 using Printf
+import HSL_jll
 
 PythonCall.pyimport("sys").path.append(@__DIR__)
 VC = PythonCall.pyimport("vectorcanos")
@@ -346,7 +347,7 @@ end
 Solve AC power flow for a PFDelta point and return a vector of outputs ordered
 like the vectorized CANOS outputs.
 """
-function solve_powerflow(point)
+function solve_powerflow(point; silent = true)
     # Build a PowerModels case from PGLib and overwrite constants from PFDelta point
     pm_data = PGLib.pglib("case14")  # assumes case14; adjust if other cases are used
     load_pfd_into_pm!(pm_data, point)
@@ -392,7 +393,9 @@ function solve_powerflow(point)
 
     ipopt = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "linear_solver" => "ma27")
     JuMP.set_optimizer(pm.model, ipopt)
-    JuMP.set_silent(pm.model)
+    if silent
+        JuMP.set_silent(pm.model)
+    end
     JuMP.optimize!(pm.model)
     return JuMP.value.(outputs)
 end
@@ -441,9 +444,11 @@ function solve_maximum_error(i::Int, sense::String)
 
     # CANOS constraints
     # We add these extra variables as a hacky workaround to make all inputs variables.
-    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = 1.0)
+    @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
     @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
-    y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
+    device = cuda_available ? "cuda" : "cpu"
+    println("device = $device")
+    y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true, device)
 
     # Which objective we add depends on the type of bus. For PV and slack buses,
     # we maximize the difference in reactive power. For PQ buses, we maximize the
@@ -615,7 +620,9 @@ function solve_constrained_error(i::Int, direction::String; training_point_index
     # We add these extra variables as a hacky workaround to make all inputs variables.
     @variable(pm.model, moai_inputs[i = 1:n_inputs], start = x0[i])
     @constraint(pm.model, moai_input_link, inputs .== moai_inputs)
-    y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true)
+    device = cuda_available ? "cuda" : "cpu"
+    println("device = $device")
+    y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true, device)
     pm_to_canos = Dict(zip(outputs, y))
 
     bustype = pm_data["bus"]["$i"]["bus_type"]
