@@ -69,13 +69,14 @@ input_names = get_input_names(pm)
 n_inputs = length(inputs)
 n_outputs = length(outputs)
 
-# Make sure our target variable does not violate any bounds
+# Make sure our target data point does not violate any bounds
 input_lbs = first.(input_bounds)
 input_ubs = last.(input_bounds)
 @assert all(input_lbs .- 1e-5 .<= x0 .<= input_ubs .+ 1e-5)
 print_x_with_bounds(x0, input_bounds, input_names)
 
 # Delete bounds and inequalities from the original model
+# We will re-add bounds on the inputs and selected outputs
 for var in JuMP.all_variables(pm.model)
     if JuMP.has_lower_bound(var)
         JuMP.delete_lower_bound(var)
@@ -88,6 +89,8 @@ for con in MPIN.get_inequality_constraints(pm.model)
     JuMP.delete(pm.model, con)
 end
 
+# Inputs can be variables, constants, or expressions (e.g., injection at a bus
+# with a shunt)
 nonconst_mask = .!isa.(inputs, Number)
 JuMP.@constraint(pm.model, input_lbs[nonconst_mask] .<= inputs[nonconst_mask] .<= input_ubs[nonconst_mask])
 #print_x_with_bounds(x0, input_bounds, input_names)
@@ -111,6 +114,8 @@ y, _ = MOAI.add_predictor(pm.model, predictor, moai_inputs; gray_box = true, dev
 pm_to_canos = Dict(zip(outputs, y))
 
 # Constraints imposing a voltage mismatch on some bus
+# How did I know that this was the right bus to target (and that these were
+# reasonable bounds)?
 vm_pm = PowerModels.var(pm, :vm, 12)
 vm_canos = pm_to_canos[vm_pm]
 @constraint(pm.model, vm_pm <= 0.90)
@@ -120,6 +125,7 @@ JuMP.set_optimizer(pm.model, Ipopt.Optimizer)
 JuMP.set_optimizer_attributes(pm.model, "linear_solver" => "ma27")
 JuMP.optimize!(pm.model)
 
+# Here, we display the NN's approximation error in each variable.
 println()
 println("Compare deviations from initial input x0")
 println("----------------------------------------")
@@ -178,6 +184,9 @@ for i in eachindex(y_pf)
     println(@sprintf("%4d %10s %10.3f %10.3f %10.3f", i, outputs[i], y_pf[i], y1[i], diff[i]))
 end
 
+# Here we use the label on the data rather than the forward pass through the model.
+# Per my data validation script, this difference should (almost) always be
+# zero, so this is just a sanity check.
 # NOTE That this only makes sense if we solved to a training point x0
 if solved_to_x0
     println()
