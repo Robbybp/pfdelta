@@ -3,6 +3,7 @@ import CSV
 import JSON
 import PGLib
 
+include("results.jl")
 include("moai-canos-model.jl")
 
 # min/max refers to the direction of bound that we constraint y_PF to violate
@@ -45,14 +46,16 @@ for (i, (bus, direction, training_point_index)) in enumerate(sweep_inputs)
     ))
 end
 
-open("con-error-points.json", "w") do io
+points_path = results_path("con-error-points.json")
+open(points_path, "w") do io
     JSON.print(io, json_array, 1)
 end
-println("Wrote adversarial points to max-error-points.json")
+println("Wrote adversarial points to $points_path")
 
 df = DataFrame(results)
-CSV.write("con-error-sweep.csv", df)
+sweep_path = results_path("con-error-sweep.csv")
+CSV.write(sweep_path, df)
 println(df)
-println("Wrote table to con-error-sweep.csv")
+println("Wrote table to $sweep_path")
 # TODO: Save points to a JSON file
 # I only plan to use these points if I want to evaluate loss or something

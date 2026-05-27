@@ -2,6 +2,7 @@ import DataFrames: DataFrame
 import CSV
 import JSON
 
+include("results.jl")
 include("moai-canos-model.jl")
 
 # min/max refers to the objective sense of the signed error between
@@ -37,14 +38,16 @@ json_array = [
     Dict("pointtype" => "max-error", "bus" => bus, "sense" => sense, "point" => point)
     for ((bus, sense), point) in zip(sweep_inputs, points)
 ]
-open("max-error-points.json", "w") do io
+points_path = results_path("max-error-points.json")
+open(points_path, "w") do io
     JSON.print(io, json_array, 1)
 end
-println("Wrote adversarial points to max-error-points.json")
+println("Wrote adversarial points to $points_path")
 
 df = DataFrame(results)
-CSV.write("max-error-sweep.csv", df)
+sweep_path = results_path("max-error-sweep.csv")
+CSV.write(sweep_path, df)
 println(df)
-println("Wrote table to max-error-sweep.csv")
+println("Wrote table to $sweep_path")
 # TODO: Save points to a JSON file
 # I only plan to use these points if I want to evaluate loss or something
