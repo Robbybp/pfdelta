@@ -8,6 +8,8 @@ Reports per-file:
   - average solve time
 """
 import pandas as pd
+import argparse
+import os
 from pathlib import Path
 
 CONVERGED = {"FEASIBLE_POINT", "NEARLY_FEASIBLE_POINT"}
@@ -24,7 +26,13 @@ def summarize_file(path: Path) -> dict:
 
 
 def main():
-    files = [Path("con-error-sweep.csv"), Path("max-error-sweep.csv")]
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("results_dir", help="Directory where results files live")
+    args = argparser.parse_args()
+    files = [
+        Path(args.results_dir, "con-error-sweep.csv"),
+        Path(args.results_dir, "max-error-sweep.csv"),
+    ]
     rows = [summarize_file(p) for p in files]
     df = pd.DataFrame(rows)
     with pd.option_context("display.max_colwidth", None):
