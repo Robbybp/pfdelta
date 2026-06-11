@@ -13,10 +13,10 @@ import json
 import os
 from pathlib import Path
 from typing import Iterable
+import argparse
 
 import numpy as np
 import pandas as pd
-import torch
 
 from core.datasets.pfdelta_variants import PFDeltaCANOS
 from vectorcanos import flatten_input, get_flattened_input_names
@@ -29,7 +29,7 @@ def load_dataset() -> PFDeltaCANOS:
         model="CANOS",
         root_dir=os.path.join("data", "pfdelta_data"),
         split="train",
-        task="1.1",
+        task=1.1,
     )
 
 
@@ -77,7 +77,11 @@ def summarize_differences(points_path: Path, dataset: PFDeltaCANOS) -> pd.DataFr
 
 
 def main(argv: Iterable[str]) -> None:
-    points_path = Path(argv[1]) if len(argv) > 1 else Path("con-error-points.json")
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("fpath", help="File containing constrained error points")
+    args = argparser.parse_args()
+    
+    points_path = Path(args.fpath)
     dataset = load_dataset()
     df = summarize_differences(points_path, dataset)
     if df.empty:
@@ -98,7 +102,8 @@ def main(argv: Iterable[str]) -> None:
         print("\nSelected perturbations:")
         print(subset.to_string(index=False))
 
-    outfile = "perturbation-summary.csv"
+    dirname = os.path.dirname(args.fpath)
+    outfile = os.path.join(dirname, "perturbation-summary.csv")
     df.to_csv(outfile)
     print(f"Wrote summary to {outfile}")
 
