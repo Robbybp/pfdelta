@@ -67,5 +67,14 @@ function evaluate_file(input_path::String, output_path::String)
     println("Wrote $(length(results)) labels to $output_path")
 end
 
-evaluate_file("con-error-points.json", "con-error-labels.json")
-evaluate_file("max-error-points.json", "max-error-labels.json")
+# TODO: Right input is probably a comma-separated list of input files
+RESULTS_DIR = joinpath("results", "20260527-powerup2026-merge")
+fnames = [
+    ("con-error-points.json", "con-error-labels.json"),
+    ("max-error-points.json", "max-error-labels.json"),
+]
+for (infile, outfile) in fnames
+    infile = joinpath(RESULTS_DIR, infile)
+    outfile = joinpath(RESULTS_DIR, outfile)
+    evaluate_file(infile, outfile)
+end
