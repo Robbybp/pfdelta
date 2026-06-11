@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 from typing import Iterable, List, Tuple
+import argparse
 
 import torch
 
@@ -109,13 +110,15 @@ def augment_aux_fields(data, labels):
 
 
 def main(argv: Iterable[str]) -> None:
-    model_path = (
-        Path(argv[1])
-        if len(argv) > 1
-        else Path(
-            "runs/canos_task_1_1/canos_k_steps15_hd128_lr5e-4_task_1_1_260116_121912/model.pt"
-        )
-    )
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("model_file", help=".pt file containing weights of the trained model")
+    #model_path = (
+    #    Path(argv[1])
+    #    if len(argv) > 1
+    #    else Path(
+    #        "runs/canos_task_1_1/canos_k_steps15_hd128_lr5e-4_task_1_1_260116_121912/model.pt"
+    #    )
+    #)
     con_path = Path(argv[2]) if len(argv) > 2 else Path("con-error-points.json")
     max_path = Path(argv[3]) if len(argv) > 3 else Path("max-error-points.json")
     con_label_path = Path(argv[4]) if len(argv) > 4 else Path("con-error-labels.json")
