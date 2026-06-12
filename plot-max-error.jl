@@ -126,8 +126,8 @@ end
 
 results_dir = joinpath("results", "20260527-powerup2026-merge")
 
-plt = plot_bus_types(results_dir, [1], [0.06, 0.08], title="Bus V")
+plt = plot_bus_types(results_dir, [1], [0.005, 0.08], title="Bus V")
 VegaLite.save(joinpath(results_dir, "max-error-pq.pdf"), plt)
 
-#plt = plot_bus_types(results_dir, [2,3], [0.0, 4.0], title="Bus Q")
-#VegaLite.save(joinpath(results_dir, "max-error-pv-slack.pdf"), plt)
+plt = plot_bus_types(results_dir, [2,3], [0.0, 4.0], title="Bus Q")
+VegaLite.save(joinpath(results_dir, "max-error-pv-slack.pdf"), plt)
