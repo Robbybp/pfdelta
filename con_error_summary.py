@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 from typing import Iterable, Tuple
-import sys
+import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -162,10 +162,24 @@ def plot_zero_norm_histogram(values: pd.Series, outfile: Path) -> None:
     print(f"Saved zero-norm histogram to {outfile}")
 
 
+def parse_args(argv: Iterable[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Summarize constrained adversarial error results."
+    )
+    parser.add_argument(
+        "results_dir",
+        type=Path,
+        help="Directory containing con-error-sweep.csv and con-error-points.json",
+    )
+    return parser.parse_args(list(argv))
+
+
 def main(argv: Iterable[str]) -> None:
-    infile = Path(argv[1]) if len(argv) > 1 else Path("con-error-sweep.csv")
-    points_path = Path(argv[2]) if len(argv) > 2 else Path("con-error-points.json")
-    outfile = Path(argv[3]) if len(argv) > 3 else Path("distance-histogram.pdf")
+    args = parse_args(argv)
+    results_dir = args.results_dir
+    infile = results_dir / "con-error-sweep.csv"
+    points_path = results_dir / "con-error-points.json"
+    outfile = results_dir / "distance-histogram.pdf"
     zero_norm_outfile = zero_norm_histogram_path(outfile)
 
     dist_df = compute_distances(infile, points_path)
@@ -175,6 +189,11 @@ def main(argv: Iterable[str]) -> None:
         return
 
     print(summary.to_string(index=False, float_format=lambda x: f"{x:.6f}"))
+    total_converged = sum(summary["converged"])
+    print(f"Total converged: {total_converged}")
+    summary_fname = results_dir / "perturbation-summary.csv"
+    summary.to_csv(summary_fname)
+    print(f"Saved summary to {summary_fname}")
 
     # HACK: We divide distance by two because all bus inputs are duplicated.
     # We have to do this after computing the summary because we divide by
@@ -199,4 +218,6 @@ def main(argv: Iterable[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv)
+    import sys
+
+    main(sys.argv[1:])
