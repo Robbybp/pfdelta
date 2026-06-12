@@ -6,9 +6,9 @@ using PowerPlots
 using PGLib
 using VegaLite
 
-function plot_bus_types(bustypes, domain; title = "Bus")
+function plot_bus_types(results_dir, bustypes, domain; title = "Bus")
     # Load objective differences
-    df = CSV.read("max-error-sweep.csv", DataFrame)
+    df = CSV.read(joinpath(results_dir, "max-error-sweep.csv"), DataFrame)
     pq_df = filter(row -> row.bustype in bustypes && !ismissing(row.objective), df)
 
     # Take the worst (max abs) objective per PQ bus
@@ -120,8 +120,14 @@ function plot_bus_types(bustypes, domain; title = "Bus")
     return plt
 end
 
-plt = plot_bus_types([1], [0.06, 0.08], title="Bus V")
-VegaLite.save("max-error-pq.pdf", plt)
+#if length(ARGS) != 1
+#    error("Usage: julia plot-max-error.jl RESULTS_DIR")
+#end
 
-plt = plot_bus_types([2,3], [0.0, 4.0], title="Bus Q")
-VegaLite.save("max-error-pv-slack.pdf", plt)
+results_dir = joinpath("results", "20260527-powerup2026-merge")
+
+plt = plot_bus_types(results_dir, [1], [0.06, 0.08], title="Bus V")
+VegaLite.save(joinpath(results_dir, "max-error-pq.pdf"), plt)
+
+#plt = plot_bus_types(results_dir, [2,3], [0.0, 4.0], title="Bus Q")
+#VegaLite.save(joinpath(results_dir, "max-error-pv-slack.pdf"), plt)

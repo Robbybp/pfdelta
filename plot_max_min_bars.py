@@ -4,8 +4,9 @@ Plot grouped bar charts of |min| and |max| objective differences per bus.
 
 Creates two subplots: one for PQ (bustype==1) and one for PV+slack (bustype in {2,3}).
 """
-import sys
+import argparse
 from pathlib import Path
+from typing import Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -64,9 +65,22 @@ def plot_group(ax, data: pd.DataFrame, title: str, ylim=None, ylabel=None):
     ax.legend()
 
 
-def main():
-    infile = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("max-error-sweep.csv")
-    outfile = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("max-min-objectives.pdf")
+def parse_args(argv: Iterable[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plot min/max objective differences by bus."
+    )
+    parser.add_argument(
+        "results_dir",
+        type=Path,
+        help="Directory containing max-error-sweep.csv",
+    )
+    return parser.parse_args(list(argv))
+
+
+def main(argv: Iterable[str]) -> None:
+    args = parse_args(argv)
+    infile = args.results_dir / "max-error-sweep.csv"
+    outfile = args.results_dir / "max-min-objectives.pdf"
 
     df = pd.read_csv(infile)
     pivot = build_bus_frame(df)
@@ -84,4 +98,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    main(sys.argv[1:])
