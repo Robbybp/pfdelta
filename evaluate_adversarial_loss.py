@@ -56,12 +56,22 @@ def iter_points_with_labels(point_path: Path, label_path: Path):
         yield vec, label_vec
 
 
-def summarize(name: str, values: List[float]):
+def loss_stats(values: List[float]):
     t = torch.tensor(values)
-    mean = t.mean().item()
-    std = t.std(unbiased=False).item()
-    maxv = t.max().item()
-    print(f"{name:18s} mean={mean:.6f}  std={std:.6f}  max={maxv:.6f}")
+    return {
+        "mean": t.mean().item(),
+        "std": t.std(unbiased=False).item(),
+        "max": t.max().item(),
+    }
+
+
+def summarize(name: str, values: List[float]):
+    stats = loss_stats(values)
+    print(
+        f"{name:18s} mean={stats['mean']:.6f}  "
+        f"std={stats['std']:.6f}  max={stats['max']:.6f}"
+    )
+    return stats
 
 
 def prepare_batches(data):
@@ -109,20 +119,32 @@ def augment_aux_fields(data, labels):
     data["bus"].bus_voltages = bus_voltages
 
 
+def parse_args(argv: Iterable[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Evaluate CANOS losses on adversarial points."
+    )
+    parser.add_argument(
+        "model_file",
+        type=Path,
+        help=".pt file containing weights of the trained model",
+    )
+    parser.add_argument(
+        "results_dir",
+        type=Path,
+        help="Directory containing adversarial point/label JSON files",
+    )
+    return parser.parse_args(list(argv))
+
+
 def main(argv: Iterable[str]) -> None:
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument("model_file", help=".pt file containing weights of the trained model")
-    #model_path = (
-    #    Path(argv[1])
-    #    if len(argv) > 1
-    #    else Path(
-    #        "runs/canos_task_1_1/canos_k_steps15_hd128_lr5e-4_task_1_1_260116_121912/model.pt"
-    #    )
-    #)
-    con_path = Path(argv[2]) if len(argv) > 2 else Path("con-error-points.json")
-    max_path = Path(argv[3]) if len(argv) > 3 else Path("max-error-points.json")
-    con_label_path = Path(argv[4]) if len(argv) > 4 else Path("con-error-labels.json")
-    max_label_path = Path(argv[5]) if len(argv) > 5 else Path("max-error-labels.json")
+    args = parse_args(argv)
+    model_path = args.model_file
+    results_dir = args.results_dir
+    con_path = results_dir / "con-error-points.json"
+    max_path = results_dir / "max-error-points.json"
+    con_label_path = results_dir / "con-error-labels.json"
+    max_label_path = results_dir / "max-error-labels.json"
+    summary_path = results_dir / "adversarial-loss-summary.json"
     point_sets: List[Tuple[Path, Path]] = [
         (con_path, con_label_path),
         (max_path, max_label_path),
@@ -165,14 +187,29 @@ def main(argv: Iterable[str]) -> None:
         return
 
     print(f"Evaluated {len(mse_vals)} points from {[str(p) for p, _ in point_sets]}")
-    summarize("CANOS MSE", mse_vals)
-    summarize("Power balance", pb_vals)
+    mse_stats = summarize("CANOS MSE", mse_vals)
+    pb_stats = summarize("Power balance", pb_vals)
 
     minpb = min(pb_vals)
     print(f"Minimum PB loss: {minpb}")
+    summary = {
+        "model_file": str(model_path),
+        "results_dir": str(results_dir),
+        "point_files": [str(p) for p, _ in point_sets],
+        "evaluated_points": len(mse_vals),
+        "losses": {
+            "canos_mse": mse_stats,
+            "power_balance": {
+                **pb_stats,
+                "min": minpb,
+            },
+        },
+    }
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+    print(f"Wrote {summary_path}")
 
 
 if __name__ == "__main__":
     import sys
 
-    main(sys.argv)
+    main(sys.argv[1:])
