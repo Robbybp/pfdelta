@@ -76,11 +76,11 @@ def summarize_differences(points_path: Path, dataset: PFDeltaCANOS) -> pd.DataFr
     return df
 
 
-def main(argv: Iterable[str]) -> None:
+def main():
     argparser = argparse.ArgumentParser()
     argparser.add_argument("fpath", help="File containing constrained error points")
     args = argparser.parse_args()
-    
+
     points_path = Path(args.fpath)
     dataset = load_dataset()
     df = summarize_differences(points_path, dataset)
@@ -91,8 +91,16 @@ def main(argv: Iterable[str]) -> None:
         print("All perturbations:")
         print(df.to_string(index=False))
 
-        subset_order = [(4, 12), (0, 4), (8, 7), (9, 9), (2, 4)]
+        subset_order = [
+            (4, 12), # vm[6]: 1.01185 -> 0.970353
+            (0, 4),  # vm[2]: 1.046 -> 0.94; vm[3]: 1.02184 -> 0.949235
+            (2, 5),  # vm[1]: 1.00556 -> 0.997748; vm[2]: 1.0071 -> 0.94; vm[6]: 1.01066 -> 1.03338
+            (7, 7),  # vm[2]: 1.04396 -> 0.94; vm[3]: 1.01535 -> 0.946131; vm[6]: 1.06 -> 0.94; vm[8]: 1.06 -> 0.94
+            (0, 13), # 1.034235 vm[1]: 1.06 -> 0.94; p_net[2]: 0.463197 -> -0.0231927; vm[2]: 1.046 -> 0.94; vm[3]: 1.02184 -> 0.94; vm[6]: 1.06 -> 0.94; vm[8]: 1.06 -> 0.94
+        ]
         subset = pd.concat(
+            # NOTE: If a point from the above subset isn't found, we just concat
+            # an empty dataframe and silently return fewer points than specified.
             [
                 df[(df["training_point_index"] == ti) & (df["bus"] == b)]
                 for (ti, b) in subset_order
@@ -109,6 +117,4 @@ def main(argv: Iterable[str]) -> None:
 
 
 if __name__ == "__main__":
-    import sys
-
-    main(sys.argv)
+    main()
