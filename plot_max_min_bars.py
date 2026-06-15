@@ -65,6 +65,21 @@ def plot_group(ax, data: pd.DataFrame, title: str, ylim=None, ylabel=None):
     ax.legend()
 
 
+def count_nonzero_bars(*groups: pd.DataFrame) -> int:
+    total = 0
+    for group in groups:
+        if group.empty:
+            continue
+        total += int((group[["min", "max"]].fillna(0) != 0).sum().sum())
+    return total
+
+
+def largest_bar(group: pd.DataFrame) -> float:
+    if group.empty:
+        return 0.0
+    return float(group[["min", "max"]].fillna(0).max().max())
+
+
 def parse_args(argv: Iterable[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot min/max objective differences by bus."
@@ -87,6 +102,12 @@ def main(argv: Iterable[str]) -> None:
 
     pq = pivot[pivot["bustype"] == 1].sort_values("bus")
     pv_slack = pivot[pivot["bustype"].isin([2, 3])].sort_values("bus")
+    print(f"Converged problems plotted: {count_nonzero_bars(pq, pv_slack)}")
+    print(f"Largest absolute error for PQ buses: {largest_bar(pq):.6f}")
+    print(
+        "Largest absolute error for PV + reference buses: "
+        f"{largest_bar(pv_slack):.6f}"
+    )
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(5, 6), sharey=False)
     plot_group(ax1, pq, "PQ Buses", ylabel="$v$ error (per-unit)")
